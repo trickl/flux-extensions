@@ -1,4 +1,7 @@
 language: java
+jdk:
+  - oraclejdk8
+  - openjdk8
 env:
   global:
   - CC_TEST_REPORTER_ID=a0dddeda8363cade8544d0079ff5992b9584fd68998b823524f279a0ef8026c8
