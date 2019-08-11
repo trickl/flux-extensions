@@ -1,0 +1,9 @@
+/target/
+
+# VS Code
+.attach*
+.vscode
+.settings
+.classpath
+.factorypath
+.project
