@@ -45,6 +45,5 @@ public class MessageTopicBroadcaster<T> implements Supplier<Publisher<T>> {
         Level.FINE, "\u001B[32mSENDING  ↑ {0}\u001B[0m on {1}",
         new Object[] {value, destination});
     messagingTemplate.convertAndSend(destination, value);
-  
   }
 }

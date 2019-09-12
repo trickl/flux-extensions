@@ -1,4 +1,4 @@
-# Trickl AssertJ JSON
+# Trickl Flux Extensions
 [![build_status](https://travis-ci.com/trickl/flux-extensions.svg?branch=master)](https://travis-ci.com/trickl/flux-extensions)
 [![Maintainability](https://api.codeclimate.com/v1/badges/83412a783fe418360329/maintainability)](https://codeclimate.com/github/trickl/flux-extensions/maintainability)
 [![Test Coverage](https://api.codeclimate.com/v1/badges/83412a783fe418360329/test_coverage)](https://codeclimate.com/github/trickl/flux-extensions/test_coverage)
