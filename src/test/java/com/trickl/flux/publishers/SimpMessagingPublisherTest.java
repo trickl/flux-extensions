@@ -19,7 +19,7 @@ import reactor.core.publisher.BaseSubscriber;
 import reactor.test.publisher.TestPublisher;
 
 @RunWith(MockitoJUnitRunner.class)
-public class MessageTopicBroadcasterTest {
+public class SimpMessagingPublisherTest {
 
   @Mock private SimpMessagingTemplate messagingTemplate;
 
@@ -35,7 +35,7 @@ public class MessageTopicBroadcasterTest {
   public void testDoesNothingWithoutSubscribers() {
     TestPublisher<String> input = TestPublisher.<String>create();
 
-    new MessageTopicBroadcaster<>(input, messagingTemplate, DESTINATION).get();
+    new SimpMessagingPublisher<>(input, messagingTemplate, DESTINATION).get();
 
     input.next("a", "a", "a");
 
@@ -46,7 +46,7 @@ public class MessageTopicBroadcasterTest {
   public void testBroadcastsOnceWithOneSubscriber() {
     TestPublisher<String> input = TestPublisher.<String>create();
     Publisher<String> broadcaster =
-        new MessageTopicBroadcaster<>(input, messagingTemplate, DESTINATION).get();
+        new SimpMessagingPublisher<>(input, messagingTemplate, DESTINATION).get();
     input.next("a", "a", "a");
     
     broadcaster.subscribe(new BaseSubscriber<String>() {});
@@ -60,7 +60,7 @@ public class MessageTopicBroadcasterTest {
   public void testBroadcastsOnceWithMultipleSubscriber() {
     TestPublisher<String> input = TestPublisher.<String>create();
     Publisher<String> broadcaster =
-        new MessageTopicBroadcaster<>(input, messagingTemplate, DESTINATION).get();
+        new SimpMessagingPublisher<>(input, messagingTemplate, DESTINATION).get();
         
     input.next("a", "a", "a");
     
@@ -88,7 +88,7 @@ public class MessageTopicBroadcasterTest {
   public void testStopsBroadcastingWithoutSubscribers() {
     TestPublisher<String> input = TestPublisher.<String>create();
     Publisher<String> broadcaster =
-        new MessageTopicBroadcaster<>(input, messagingTemplate, DESTINATION).get();
+        new SimpMessagingPublisher<>(input, messagingTemplate, DESTINATION).get();
         
     input.next("a", "a", "a");
     
@@ -111,7 +111,7 @@ public class MessageTopicBroadcasterTest {
   public void testStopsBroadcastingWithoutSubscribersScenario2() {
     TestPublisher<String> input = TestPublisher.<String>create();
     Publisher<String> broadcaster =
-        new MessageTopicBroadcaster<>(input, messagingTemplate, DESTINATION).get();
+        new SimpMessagingPublisher<>(input, messagingTemplate, DESTINATION).get();
         
     input.next("a", "a", "a");
     
@@ -146,7 +146,7 @@ public class MessageTopicBroadcasterTest {
   public void testRebroadcastingOnResubscribers() {
     TestPublisher<String> input = TestPublisher.<String>create();
     Publisher<String> broadcaster =
-        new MessageTopicBroadcaster<>(input, messagingTemplate, DESTINATION).get();
+        new SimpMessagingPublisher<>(input, messagingTemplate, DESTINATION).get();
         
     input.next("a", "a", "a");
     

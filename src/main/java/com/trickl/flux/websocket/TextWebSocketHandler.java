@@ -23,7 +23,7 @@ public class TextWebSocketHandler implements WebSocketHandler {
   @Override
   public Mono<Void> handle(WebSocketSession session) {
     Mono<Void> input = session.receive()
-        .doOnNext(this::handleMessage).log("handle").then();
+        .doOnNext(this::handleMessage).then();
 
     Mono<Void> output =
         session.send(
@@ -42,8 +42,10 @@ public class TextWebSocketHandler implements WebSocketHandler {
   }
 
   protected void handleMessage(WebSocketMessage message) {
-    log.log(Level.FINE, "Received message type - {0}", new Object[] {message.getType()});       
+    log.log(Level.FINE, "Received message type - {0}", new Object[] {message.getType()});
+    message.retain();
     String payload = message.getPayloadAsText();
+
     log.log(
         Level.FINE, "\u001B[34mRECEIVED {0}\u001B[0m", new Object[] {payload});
     receive.next(payload);    

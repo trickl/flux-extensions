@@ -1,15 +1,26 @@
 package com.trickl.flux.websocket;
 
+import com.trickl.exceptions.SubscriptionFailedException;
+import com.trickl.flux.publishers.SimpMessagingPublisher;
+
+import java.security.Principal;
+import java.text.MessageFormat;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
+import java.util.logging.Level;
+
 import lombok.RequiredArgsConstructor;
+import lombok.extern.java.Log;
+
 import org.springframework.context.ApplicationEvent;
 import org.springframework.context.event.SmartApplicationListener;
 import org.springframework.core.Ordered;
 import org.springframework.lang.Nullable;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.messaging.simp.user.SimpSubscription;
 import org.springframework.messaging.simp.user.SimpUserRegistry;
 import org.springframework.messaging.support.MessageHeaderAccessor;
@@ -21,18 +32,23 @@ import org.springframework.web.socket.messaging.SessionUnsubscribeEvent;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 
+@Log
 @RequiredArgsConstructor
-public class WebSocketFluxRouter implements SmartApplicationListener {
+public class WebSocketRequestRouter implements SmartApplicationListener {
 
-  private final Function<String, Flux<?>> fluxFactory;
+  private final Function<WebSocketRequest, Optional<Flux<?>>> fluxFactory;
 
   private final SimpUserRegistry simpUserRegistry;
 
+  private final SimpMessagingTemplate messagingTemplate;
+
   // Destination -> Flux
-  private final Map<String, Flux<?>> fluxes = new ConcurrentHashMap<>();
+  private final Map<WebSocketRequest, Optional<Flux<?>>> fluxes = new ConcurrentHashMap<>();
 
   // SubscriptionId -> Subscription
   private final Map<String, Disposable> subscriptions = new ConcurrentHashMap<>();
+
+  private final WebSocketRequestBuilder webSocketRequestBuilder = new WebSocketRequestBuilder();
 
   @Override
   public boolean supportsEventType(Class<? extends ApplicationEvent> eventType) {
@@ -49,12 +65,22 @@ public class WebSocketFluxRouter implements SmartApplicationListener {
     return Ordered.LOWEST_PRECEDENCE;
   }
 
-  protected void subscribe(String destination, String subscriptionId) {
-    Flux<?> flux = this.fluxes.computeIfAbsent(destination, fluxFactory::apply);
+  protected void subscribe(Principal user, String destination, String subscriptionId) 
+      throws SubscriptionFailedException {
+    WebSocketRequest webSocketRequest = webSocketRequestBuilder.apply(destination)
+        .orElseThrow(() -> new SubscriptionFailedException(
+            MessageFormat.format("Destination: {0} not found.", destination)));
+    
+    Flux<?> flux = this.fluxes.computeIfAbsent(webSocketRequest, fluxFactory::apply)
+        .orElseThrow(() -> new SubscriptionFailedException(
+            MessageFormat.format("Destination: {0} not found.", destination)));
 
-    Disposable subscription =
-        flux.doOnCancel(() -> this.fluxes.remove(destination))
-            .doOnComplete(() -> this.fluxes.remove(destination))
+    SimpMessagingPublisher<?> broadcaster = new SimpMessagingPublisher<>(
+        flux, messagingTemplate, destination);
+
+    Disposable subscription = Flux.from(broadcaster.get())
+            .doOnCancel(() -> this.fluxes.remove(webSocketRequest))
+            .doOnComplete(() -> this.fluxes.remove(webSocketRequest))
             .subscribe();
 
     this.subscriptions.put(subscriptionId, subscription);
@@ -76,12 +102,16 @@ public class WebSocketFluxRouter implements SmartApplicationListener {
     SimpMessageHeaderAccessor accessor =
         MessageHeaderAccessor.getAccessor(message, SimpMessageHeaderAccessor.class);
     Assert.state(accessor != null, "No SimpMessageHeaderAccessor");
-
-    String destination = accessor.getDestination();
-    Assert.state(destination != null, "No destination");
-
+    
     if (event instanceof SessionSubscribeEvent) {
-      this.subscribe(destination, accessor.getSubscriptionId());
+      String destination = accessor.getDestination();
+      Assert.state(destination != null, "No destination");
+      
+      try {
+        this.subscribe(accessor.getUser(), destination, accessor.getSubscriptionId());
+      } catch (SubscriptionFailedException ex) {
+        log.log(Level.WARNING, "Subscription failed", ex);
+      }
     } else if (event instanceof SessionDisconnectEvent) {
       // Unsubscribe any hanging subscriptions
       String sessionId = accessor.getSessionId();

@@ -2,11 +2,12 @@ package com.trickl.flux.websocket;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class DestinationConverter implements Function<String, WebSocketDestination> {
+public class WebSocketRequestBuilder implements Function<String, Optional<WebSocketRequest>> {
 
   private static final String TOPIC_PREFIX_PATTERN = "\\/(?<destinationType>topic)";
   private static final String USER_QUEUE_PREFIX_PATTERN =
@@ -21,22 +22,22 @@ public class DestinationConverter implements Function<String, WebSocketDestinati
 
   
   @Override
-  public WebSocketDestination apply(String destination) {
+  public Optional<WebSocketRequest> apply(String destination) {
     Matcher matcher = topicPattern.matcher(destination);
 
-    WebSocketDestination.WebSocketDestinationBuilder builder 
-        = WebSocketDestination.builder();
+    WebSocketRequest.WebSocketRequestBuilder builder 
+        = WebSocketRequest.builder();
 
     if (!matcher.matches()) {
       matcher = userQueuePattern.matcher(destination);
       builder.userName(matcher.group("userName"));
 
       if (!matcher.matches()) {
-        return null;
+        return Optional.empty();
       }
     }
 
-    String channelType = matcher.group("channelType");    
+    String channelType = matcher.group("channelType").toUpperCase();    
     String parametersString = matcher.group("parameters");
     List<String> parameters = Arrays.asList(parametersString.split("/"));
     
@@ -44,9 +45,9 @@ public class DestinationConverter implements Function<String, WebSocketDestinati
         Enum.valueOf(WebSocketDestinationType.class,
         matcher.group("destinationType").toUpperCase());
 
-    return builder.destinationType(destinationType)
+    return Optional.of(builder.destinationType(destinationType)
         .channelType(channelType)
         .params(parameters)
-        .build();
+        .build());
   }
 }

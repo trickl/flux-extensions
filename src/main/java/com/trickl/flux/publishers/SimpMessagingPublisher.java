@@ -9,7 +9,7 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import reactor.core.publisher.Flux;
 
 @Log
-public class MessageTopicBroadcaster<T> implements Supplier<Publisher<T>> {
+public class SimpMessagingPublisher<T> implements Supplier<Publisher<T>> {
 
   private final Publisher<T> source;
   private final SimpMessagingTemplate messagingTemplate;
@@ -23,7 +23,7 @@ public class MessageTopicBroadcaster<T> implements Supplier<Publisher<T>> {
    * @param messagingTemplate Messaging template for broadcast
    * @param destination The destination of messages
    */
-  public MessageTopicBroadcaster(
+  public SimpMessagingPublisher(
       Publisher<T> source, SimpMessagingTemplate messagingTemplate, String destination) {
     this.source = source;
     this.messagingTemplate = messagingTemplate;
