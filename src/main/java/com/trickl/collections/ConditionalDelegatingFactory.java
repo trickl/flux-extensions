@@ -9,9 +9,9 @@ import lombok.EqualsAndHashCode;
 import lombok.ToString;
 import lombok.Value;
 
-public class ConditionalDelegatingFactory<T, S> implements Function<T, Optional<S>> {
+public class ConditionalDelegatingFactory<T, S>  {
   private static final int INITIAL_CAPACITY = 4;
-  PriorityQueue<DelegateFactoryWithPriority> delegates = 
+  PriorityQueue<DelegateFunctionWithPriority> delegates = 
       new PriorityQueue<>(INITIAL_CAPACITY, (a, b) ->
         Integer.compare(a.getPriority(), b.getPriority())
       );
@@ -19,37 +19,41 @@ public class ConditionalDelegatingFactory<T, S> implements Function<T, Optional<
   /**
    * Add a factory to delegate to.
    *
-   * @param factory The factory to delegate to.
+   * @param function The factory to delegate to.
    * @param predicate The condition to satisfy to use this delegate
    */
-  public void addFactory(Function<T, S> factory, Predicate<T> predicate) {
+  public void addFunction(Function<T, S> function, Predicate<T> predicate) {
     Optional<Integer> lowestPriority =
-        delegates.stream().map(DelegateFactoryWithPriority::getPriority).reduce(Math::max);
-    addFactory(factory, predicate, lowestPriority.orElse(0) + 1);
+        delegates.stream().map(DelegateFunctionWithPriority::getPriority).reduce(Math::max);
+    addFunction(function, predicate, lowestPriority.orElse(0) + 1);
   }
 
-  public void addFactory(Function<T, S> factory, Predicate<T> predicate, int priority) {
-    removeFactory(factory);
-    delegates.add(new DelegateFactoryWithPriority(factory, predicate, priority));
+  public void addFunction(Function<T, S> function, Predicate<T> predicate, int priority) {
+    removeFunction(function);
+    delegates.add(new DelegateFunctionWithPriority(function, predicate, priority));
   }
 
-  public boolean removeFactory(Function<T, S> factory) {
-    return delegates.removeIf(delegate -> delegate.getFactory().equals(factory));
+  public boolean removeFunction(Function<T, S> function) {
+    return delegates.removeIf(delegate -> delegate.getFunction().equals(function));
   }
 
-  @Override
-  public Optional<S> apply(T params) {
+  /**
+   * Apply the first function whose predicate succeeds the test value.
+   * @param value The value to check against each predicate
+   * @return The result of applying the first matching function.
+   */
+  public Optional<S> applyFirstMatch(T value) {
     return delegates.stream()
-        .filter(delegate -> delegate.getPredicate().test(params))
+        .filter(delegate -> delegate.getPredicate().test(value))
         .findFirst()
-        .map(delegate -> delegate.getFactory().apply(params));
+        .map(delegate -> delegate.getFunction().apply(value));
   }
 
   @ToString
   @Value
   @EqualsAndHashCode
-  private class DelegateFactoryWithPriority {
-    protected final Function<T, S> factory;
+  private class DelegateFunctionWithPriority {
+    protected final Function<T, S> function;
 
     protected final Predicate<T> predicate;
 

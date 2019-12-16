@@ -37,12 +37,11 @@ public class TextWebSocketHandler implements WebSocketHandler {
 
   protected WebSocketMessage createMessage(WebSocketSession session, String message) {
     log.log(
-        Level.FINE, "\u001B[34mSENDING {0}\u001B[0m", new Object[] {message});
+        Level.FINE, "\u001B[34mSENDING {0}\u001B[0m", new Object[] {message});    
     return session.textMessage(message);
   }
 
   protected void handleMessage(WebSocketMessage message) {
-    log.log(Level.FINE, "Received message type - {0}", new Object[] {message.getType()});
     message.retain();
     String payload = message.getPayloadAsText();
 

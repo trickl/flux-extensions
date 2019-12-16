@@ -34,16 +34,16 @@ import reactor.core.publisher.Flux;
 
 @Log
 @RequiredArgsConstructor
-public class WebSocketRequestRouter implements SmartApplicationListener {
+public class WebSocketRequestRouter<T> implements SmartApplicationListener {
 
-  private final Function<WebSocketRequest, Optional<Flux<?>>> fluxFactory;
+  private final Function<WebSocketRequest, Optional<Flux<T>>> fluxFactory;
 
   private final SimpUserRegistry simpUserRegistry;
 
   private final SimpMessagingTemplate messagingTemplate;
 
   // Destination -> Flux
-  private final Map<WebSocketRequest, Optional<Flux<?>>> fluxes = new ConcurrentHashMap<>();
+  private final Map<WebSocketRequest, Optional<Flux<T>>> fluxes = new ConcurrentHashMap<>();
 
   // SubscriptionId -> Subscription
   private final Map<String, Disposable> subscriptions = new ConcurrentHashMap<>();
@@ -96,6 +96,7 @@ public class WebSocketRequestRouter implements SmartApplicationListener {
 
   @Override
   public void onApplicationEvent(ApplicationEvent event) {
+    log.log(Level.FINE, "Received WebSocket event - " + event.getClass());
     AbstractSubProtocolEvent subProtocolEvent = (AbstractSubProtocolEvent) event;
     Message<?> message = subProtocolEvent.getMessage();
 

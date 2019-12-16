@@ -2,8 +2,9 @@ package com.trickl.flux.websocket;
 
 import java.net.URI;
 import java.util.function.Supplier;
+
 import lombok.RequiredArgsConstructor;
-import lombok.extern.java.Log;
+
 import org.reactivestreams.Publisher;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.reactive.socket.client.WebSocketClient;
@@ -14,9 +15,8 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
 
-@Log
 @RequiredArgsConstructor
-public class TextWebSocketFluxClient {
+public class BinaryWebSocketFluxClient {
 
   private final WebSocketClient webSocketClient;
 
@@ -24,28 +24,34 @@ public class TextWebSocketFluxClient {
 
   private final Supplier<HttpHeaders> webSocketHeadersProvider;
 
+  private final Runnable onConnect;
+
+  private final Runnable onDisconnect;
+
   /**
    * Get a flux of messages from the stream.
    *
    * @return A flux of (untyped) objects
    */
-  public Flux<String> get(Publisher<String> send) {
-    EmitterProcessor<String> receiveProcessor = EmitterProcessor.create();
-    return Flux.<String, Disposable>using(
-        () -> connect(send, receiveProcessor.sink())
+  public Flux<byte[]> get(Publisher<byte[]> send) {
+    EmitterProcessor<byte[]> connectionProcessor = EmitterProcessor.create();    
+    return Flux.<byte[], Disposable>using(
+        () -> connect(send, connectionProcessor.sink())
             .subscribe(),
-        connection -> receiveProcessor,
+        connection -> connectionProcessor,
         connection -> {
-          connection.dispose();
-          log.info("Connection disposed.");          
+          onDisconnect.run();
+          connection.dispose();          
         });
   }
 
-  protected Mono<Void> connect(Publisher<String> send, FluxSink<String> receive) {
-    TextWebSocketHandler handler = new TextWebSocketHandler(receive, Flux.from(send));
+  protected Mono<Void> connect(Publisher<byte[]> send, FluxSink<byte[]> receive) {
+    BinaryWebSocketHandler dataHandler = new BinaryWebSocketHandler(receive, Flux.from(send));
+    SessionHandler sessionHandler = new SessionHandler(dataHandler,
+        sessionId -> onConnect.run());
 
     return webSocketClient
-        .execute(transportUrl, webSocketHeadersProvider.get(), handler).log("client")
+        .execute(transportUrl, webSocketHeadersProvider.get(), sessionHandler).log("client")
         .doOnError(receive::error);
   }
 }
