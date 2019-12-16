@@ -19,13 +19,14 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 
 @RequiredArgsConstructor
-public class StompFluxClient<I, O> {
+public class StompFluxClient<O, I> {
   private final WebSocketClient webSocketClient;
   private final URI transportUri;
   private final Supplier<HttpHeaders> webSocketHeadersProvider;
   private final ObjectMapper objectMapper;
-  private final Class<I> requestMessageType;
-  private final Class<O> responseMessageType;
+
+  private final Class<O> requestMessageType;
+  private final Class<I> responseMessageType;
 
   /**
    * Connect to a stomp service.
@@ -36,9 +37,9 @@ public class StompFluxClient<I, O> {
   public Flux<StompFrame> get(Publisher<StompFrame> send) {
     StompInputTransformer<I> stompInputTransformer =
         new StompInputTransformer<>(
-            objectMapper, requestMessageType);
+            objectMapper, responseMessageType);
     StompOutputTransformer<O> stompOutputTransformer =
-        new StompOutputTransformer<>(objectMapper, responseMessageType);
+        new StompOutputTransformer<>(objectMapper, requestMessageType);
 
     EmitterProcessor<StompFrame> frameProcessor = EmitterProcessor.create();    
     FluxSink<StompFrame> frameSink = frameProcessor.sink();
