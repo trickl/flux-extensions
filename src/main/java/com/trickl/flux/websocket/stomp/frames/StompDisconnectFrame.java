@@ -1,6 +1,5 @@
 package com.trickl.flux.websocket.stomp.frames;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trickl.flux.websocket.stomp.StompFrame;
 
 import lombok.Builder;
@@ -25,7 +24,7 @@ public class StompDisconnectFrame implements StompFrame {
   /**
    * Convert to the websocket message.
    */
-  public Message<byte[]> toMessage(ObjectMapper objectMapper) {
+  public Message<byte[]> toMessage() {
     return MessageBuilder.createMessage(new byte[0], getHeaderAccessor().toMessageHeaders());
   }
 }

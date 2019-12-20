@@ -41,6 +41,8 @@ public class ConditionalDelegatingSupplier<T, S>  {
 
   /**
    * Apply all suppliers.
+   * 
+   * @return All suppliers
    */
   public List<S> applyAll() {
     return delegates.stream()

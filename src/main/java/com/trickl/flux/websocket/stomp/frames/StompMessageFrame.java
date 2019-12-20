@@ -1,10 +1,8 @@
 package com.trickl.flux.websocket.stomp.frames;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trickl.flux.websocket.stomp.StompFrame;
 
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
 import lombok.Builder;
@@ -18,8 +16,8 @@ import org.springframework.messaging.support.MessageBuilder;
 
 @Data
 @Builder
-public class StompMessageFrame<T> implements StompFrame {
-  protected T value;
+public class StompMessageFrame implements StompFrame {
+  protected String body;
   protected String destination;
   protected String messageId;
   protected String subscriptionId;
@@ -42,23 +40,16 @@ public class StompMessageFrame<T> implements StompFrame {
    * @param payload The message payload
    * @return A typed message
    */
-  public static <T> StompFrame create(
+  public static StompFrame create(
       StompHeaderAccessor headerAccessor,
-      byte[] payload,
-      ObjectMapper objectMapper,
-      Class<T> valueType) throws StompConversionException {
-    try {
-      String content = new String(payload, StandardCharsets.UTF_8);
-      T value = objectMapper.readValue(content, valueType);
-      return StompMessageFrame.builder()
-          .destination(headerAccessor.getDestination())
-          .messageId(headerAccessor.getMessageId())
-          .subscriptionId(headerAccessor.getSubscriptionId())
-          .value(value)
-        .build();
-    } catch (IOException ex) {
-      throw new StompConversionException("Unable to read STOMP message", ex);
-    }
+      byte[] payload) throws StompConversionException {
+    String body = new String(payload, StandardCharsets.UTF_8);
+    return StompMessageFrame.builder()
+        .destination(headerAccessor.getDestination())
+        .messageId(headerAccessor.getMessageId())
+        .subscriptionId(headerAccessor.getSubscriptionId())
+        .body(body)
+      .build();  
   }
 
   /**
@@ -66,9 +57,8 @@ public class StompMessageFrame<T> implements StompFrame {
    * 
    * @throws JsonProcessingException if the message cannot be converted
    */
-  public Message<byte[]> toMessage(ObjectMapper objectMapper) throws JsonProcessingException {
-    String json = objectMapper.writeValueAsString(value);    
-    return MessageBuilder.createMessage(json.getBytes(StandardCharsets.UTF_8), 
+  public Message<byte[]> toMessage() throws JsonProcessingException {  
+    return MessageBuilder.createMessage(body.getBytes(StandardCharsets.UTF_8), 
         getHeaderAccessor().toMessageHeaders());
   }
 }

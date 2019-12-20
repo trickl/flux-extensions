@@ -1,7 +1,5 @@
 package com.trickl.flux.websocket.stomp;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-
 import java.io.IOException;
 import java.util.function.Function;
 
@@ -12,19 +10,16 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 @RequiredArgsConstructor
-public class StompOutputTransformer<T> implements Function<Publisher<StompFrame>, Flux<byte[]>> {
-
-  private final ObjectMapper objectMapper;
-  private final Class<T> messageType;
+public class StompOutputTransformer implements Function<Publisher<StompFrame>, Flux<byte[]>> {
 
   @Override
   public Flux<byte[]> apply(Publisher<StompFrame> source) {
-    StompMessageCodec<T> codec = new StompMessageCodec<>(objectMapper, messageType);
+    StompMessageCodec codec = new StompMessageCodec();
     return Flux.from(source)
         .flatMap(payload -> sendFrame(payload, codec));
   }
 
-  protected Publisher<byte[]> sendFrame(StompFrame payload, StompMessageCodec<T> codec) {
+  protected Publisher<byte[]> sendFrame(StompFrame payload, StompMessageCodec codec) {
 
     if (payload == null) {
       return Mono.empty();

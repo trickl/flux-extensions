@@ -1,7 +1,5 @@
 package com.trickl.flux.websocket.stomp.frames;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trickl.flux.websocket.stomp.StompFrame;
 
 import java.nio.charset.StandardCharsets;
@@ -16,8 +14,8 @@ import org.springframework.messaging.support.MessageBuilder;
 
 @Data
 @Builder
-public class StompSendFrame<T> implements StompFrame {
-  protected T value;
+public class StompSendFrame implements StompFrame {
+  protected String body;
   protected String destination;
 
   /**
@@ -31,12 +29,9 @@ public class StompSendFrame<T> implements StompFrame {
 
   /**
    * Convert to the websocket message.
-   * 
-   * @throws JsonProcessingException if the message cannot be converted
    */
-  public Message<byte[]> toMessage(ObjectMapper objectMapper) throws JsonProcessingException {
-    String json = objectMapper.writeValueAsString(value);    
-    return MessageBuilder.createMessage(json.getBytes(StandardCharsets.UTF_8), 
+  public Message<byte[]> toMessage() {
+    return MessageBuilder.createMessage(body.getBytes(StandardCharsets.UTF_8), 
         getHeaderAccessor().toMessageHeaders());
   }
 }

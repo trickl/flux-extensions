@@ -26,7 +26,8 @@ public class TextWebSocketFluxClient {
 
   /**
    * Get a flux of messages from the stream.
-   *
+   * 
+   * @param send the flux of messages to send upstream   
    * @return A flux of (untyped) objects
    */
   public Flux<String> get(Publisher<String> send) {

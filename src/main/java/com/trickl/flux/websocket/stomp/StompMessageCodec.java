@@ -1,7 +1,5 @@
 package com.trickl.flux.websocket.stomp;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.List;
@@ -17,10 +15,7 @@ import org.springframework.messaging.simp.stomp.StompEncoder;
 
 @Log
 @RequiredArgsConstructor
-public class StompMessageCodec<T> {
-
-  private final ObjectMapper objectMapper;
-  private final Class<T> messageType;
+public class StompMessageCodec {
 
   private final StompEncoder encoder = new StompEncoder();
   private final StompDecoder decoder = new StompDecoder();
@@ -34,7 +29,7 @@ public class StompMessageCodec<T> {
   public byte[] encode(StompFrame stompMessage) throws IOException {
     log.log(
         Level.FINE, "\u001B[34mSENDING {0}\u001B[0m", new Object[] {stompMessage}); 
-    Message<byte[]> message = stompMessage.toMessage(objectMapper);
+    Message<byte[]> message = stompMessage.toMessage();
     return encoder.encode(message);
   }
 
@@ -45,8 +40,8 @@ public class StompMessageCodec<T> {
    * @throws IOException If the message cannot be decoded
    */
   public List<StompFrame> decode(byte[] payload)  throws IOException {
-    StompFrameBuilder<T> frameBuilder
-        = new StompFrameBuilder<>(objectMapper, messageType);
+    StompFrameBuilder frameBuilder
+        = new StompFrameBuilder();
     ByteBuffer byteBuffer = ByteBuffer.wrap(payload);
     List<Message<byte[]>> messages = decoder.decode(byteBuffer);
     return messages.stream()

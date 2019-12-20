@@ -23,6 +23,7 @@ public class FixedRatePublisher implements Supplier<Flux<Long>> {
   /**
    * Create a new flux that emitters an incrementing long at a fixed rate.
    *
+   * @param period the time period between emitted elements
    */
   public FixedRatePublisher(Duration period) {
     this(Duration.ZERO, period, Schedulers.parallel());

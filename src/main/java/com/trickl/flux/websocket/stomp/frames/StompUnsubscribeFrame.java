@@ -12,16 +12,14 @@ import org.springframework.messaging.support.MessageBuilder;
 
 @Data
 @Builder
-public class StompSubscribeFrame implements StompFrame {
-  protected String destination;
+public class StompUnsubscribeFrame implements StompFrame {
   protected String subscriptionId;
 
   /**
    * Get the stomp headers for this message.
    */
   public StompHeaderAccessor getHeaderAccessor() {
-    StompHeaderAccessor stompHeaderAccessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
-    stompHeaderAccessor.setDestination(destination);
+    StompHeaderAccessor stompHeaderAccessor = StompHeaderAccessor.create(StompCommand.UNSUBSCRIBE);
     stompHeaderAccessor.setSubscriptionId(subscriptionId);
     return stompHeaderAccessor;
   }

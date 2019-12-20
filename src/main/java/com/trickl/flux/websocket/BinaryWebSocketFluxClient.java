@@ -31,6 +31,7 @@ public class BinaryWebSocketFluxClient {
   /**
    * Get a flux of messages from the stream.
    *
+   * @param send flux of messages to send upstream
    * @return A flux of (untyped) objects
    */
   public Flux<byte[]> get(Publisher<byte[]> send) {

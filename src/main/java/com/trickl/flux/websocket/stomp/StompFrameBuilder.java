@@ -1,6 +1,5 @@
 package com.trickl.flux.websocket.stomp;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trickl.flux.websocket.stomp.StompFrame;
 import com.trickl.flux.websocket.stomp.frames.StompConnectedFrame;
 import com.trickl.flux.websocket.stomp.frames.StompErrorFrame;
@@ -16,10 +15,7 @@ import org.springframework.messaging.simp.stomp.StompConversionException;
 import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 
 @RequiredArgsConstructor
-public class StompFrameBuilder<T> implements Function<Message<byte[]>, StompFrame> {
-
-  private final ObjectMapper objectMapper;
-  private final Class<T> messageType;
+public class StompFrameBuilder implements Function<Message<byte[]>, StompFrame> {
 
   /**
    * Build a stomp frame from a websocket message.
@@ -33,7 +29,7 @@ public class StompFrameBuilder<T> implements Function<Message<byte[]>, StompFram
     switch (headerAccessor.getCommand()) {
       case MESSAGE:
         return StompMessageFrame.create(
-            headerAccessor, message.getPayload(), objectMapper, messageType);
+            headerAccessor, message.getPayload());
       case CONNECTED:
         return StompConnectedFrame.create(headerAccessor);
       case RECEIPT:
