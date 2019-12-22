@@ -22,7 +22,7 @@ public class BinaryWebSocketFluxClient {
 
   private final URI transportUrl;
 
-  private final Supplier<HttpHeaders> webSocketHeadersProvider;
+  private final Mono<HttpHeaders> webSocketHeadersProvider;
 
   private final Runnable onConnect;
 
@@ -51,8 +51,8 @@ public class BinaryWebSocketFluxClient {
     SessionHandler sessionHandler = new SessionHandler(dataHandler,
         sessionId -> onConnect.run());
 
-    return webSocketClient
-        .execute(transportUrl, webSocketHeadersProvider.get(), sessionHandler).log("client")
+    return webSocketHeadersProvider.flatMap(headers -> 
+        webSocketClient.execute(transportUrl, headers, sessionHandler).log("client"))
         .doOnError(receive::error);
   }
 }

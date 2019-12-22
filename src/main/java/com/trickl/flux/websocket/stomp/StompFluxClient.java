@@ -19,7 +19,6 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Supplier;
 import java.util.logging.Level;
 
 import lombok.RequiredArgsConstructor;
@@ -40,7 +39,7 @@ import reactor.core.publisher.Mono;
 public class StompFluxClient {
   private final WebSocketClient webSocketClient;
   private final URI transportUri;
-  private final Supplier<HttpHeaders> webSocketHeadersProvider;
+  private final Mono<HttpHeaders> webSocketHeadersProvider;
   private final ObjectMapper objectMapper;
 
   private final EmitterProcessor<StompFrame> responseProcessor = EmitterProcessor.create();

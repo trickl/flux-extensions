@@ -6,7 +6,6 @@ import com.trickl.flux.websocket.stomp.frames.StompConnectFrame;
 import com.trickl.flux.websocket.stomp.frames.StompDisconnectFrame;
 
 import java.net.URI;
-import java.util.function.Supplier;
 
 import lombok.RequiredArgsConstructor;
 
@@ -17,12 +16,13 @@ import org.springframework.web.reactive.socket.client.WebSocketClient;
 import reactor.core.publisher.EmitterProcessor;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
+import reactor.core.publisher.Mono;
 
 @RequiredArgsConstructor
 public class RawStompFluxClient {
   private final WebSocketClient webSocketClient;
   private final URI transportUri;
-  private final Supplier<HttpHeaders> webSocketHeadersProvider;
+  private final Mono<HttpHeaders> webSocketHeadersProvider;
 
   /**
    * Connect to a stomp service.

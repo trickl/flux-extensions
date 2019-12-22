@@ -13,12 +13,13 @@ import org.springframework.web.reactive.socket.client.WebSocketClient;
 import org.springframework.web.socket.sockjs.client.SockJsUrlInfo;
 import org.springframework.web.socket.sockjs.transport.TransportType;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 @RequiredArgsConstructor
 public class SockJsFluxClient {
   private final WebSocketClient webSocketClient;
   private final SockJsUrlInfo sockJsUrlInfo;
-  private final Supplier<HttpHeaders> webSocketHeadersProvider;
+  private final Mono<HttpHeaders> webSocketHeadersProvider;
   private final ObjectMapper objectMapper;
   private final Supplier<String> openMessageSupplier;
   private final Supplier<String> hearbeatMessageSupplier;
@@ -42,6 +43,7 @@ public class SockJsFluxClient {
             webSocketClient,
             sockJsUrlInfo.getTransportUrl(TransportType.WEBSOCKET),
             webSocketHeadersProvider);
+            
     return sockJsInputTransformer.apply(webSocketFluxClient.get(
       sockJsOutputTransformer.apply(Flux.from(send))));
   }

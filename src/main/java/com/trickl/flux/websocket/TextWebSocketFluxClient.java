@@ -22,7 +22,7 @@ public class TextWebSocketFluxClient {
 
   private final URI transportUrl;
 
-  private final Supplier<HttpHeaders> webSocketHeadersProvider;
+  private final Mono<HttpHeaders> webSocketHeadersProvider;
 
   /**
    * Get a flux of messages from the stream.
@@ -45,8 +45,8 @@ public class TextWebSocketFluxClient {
   protected Mono<Void> connect(Publisher<String> send, FluxSink<String> receive) {
     TextWebSocketHandler handler = new TextWebSocketHandler(receive, Flux.from(send));
 
-    return webSocketClient
-        .execute(transportUrl, webSocketHeadersProvider.get(), handler).log("client")
+    return webSocketHeadersProvider.flatMap(headers -> 
+        webSocketClient.execute(transportUrl, headers, handler).log("client"))
         .doOnError(receive::error);
   }
 }
