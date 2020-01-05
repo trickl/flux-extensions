@@ -1,7 +1,7 @@
 package com.trickl.flux.websocket;
 
 import com.trickl.exceptions.SubscriptionFailedException;
-import com.trickl.flux.publishers.SimpMessagingPublisher;
+import com.trickl.flux.consumers.SimpMessageSender;
 
 import java.security.Principal;
 import java.text.MessageFormat;
@@ -71,16 +71,17 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
         .orElseThrow(() -> new SubscriptionFailedException(
             MessageFormat.format("Destination: {0} not found.", destination)));
     
-    Flux<?> flux = this.fluxes.computeIfAbsent(webSocketRequest, fluxFactory::apply)
+    Flux<?> connectableFlux = this.fluxes.computeIfAbsent(
+        webSocketRequest, fluxFactory::apply)    
         .orElseThrow(() -> new SubscriptionFailedException(
-            MessageFormat.format("Destination: {0} not found.", destination)));
+            MessageFormat.format("Destination: {0} not found.", destination)))
+        .doOnNext(new SimpMessageSender<>(messagingTemplate, destination))
+        .publish()
+        .refCount();
 
-    SimpMessagingPublisher<?> broadcaster = new SimpMessagingPublisher<>(
-        flux, messagingTemplate, destination);
-
-    Disposable subscription = Flux.from(broadcaster.get())
+    Disposable subscription = connectableFlux
             .doOnCancel(() -> this.fluxes.remove(webSocketRequest))
-            .doOnComplete(() -> this.fluxes.remove(webSocketRequest))
+            .doOnTerminate(() -> this.fluxes.remove(webSocketRequest))
             .subscribe();
 
     this.subscriptions.put(subscriptionId, subscription);

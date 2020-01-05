@@ -1,4 +1,4 @@
-package com.trickl.flux.publishers;
+package com.trickl.flux.consumers;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doNothing;
@@ -16,10 +16,11 @@ import org.reactivestreams.Subscriber;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 
 import reactor.core.publisher.BaseSubscriber;
+import reactor.core.publisher.Flux;
 import reactor.test.publisher.TestPublisher;
 
 @RunWith(MockitoJUnitRunner.class)
-public class SimpMessagingPublisherTest {
+public class SimpMessageSenderTest {
 
   @Mock private SimpMessagingTemplate messagingTemplate;
 
@@ -35,7 +36,10 @@ public class SimpMessagingPublisherTest {
   public void testDoesNothingWithoutSubscribers() {
     TestPublisher<String> input = TestPublisher.<String>create();
 
-    new SimpMessagingPublisher<>(input, messagingTemplate, DESTINATION).get();
+    Publisher<String> output = Flux.from(input)
+        .doOnNext(new SimpMessageSender<>(messagingTemplate, DESTINATION))
+        .publish()
+        .refCount();
 
     input.next("a", "a", "a");
 
@@ -45,11 +49,13 @@ public class SimpMessagingPublisherTest {
   @Test
   public void testBroadcastsOnceWithOneSubscriber() {
     TestPublisher<String> input = TestPublisher.<String>create();
-    Publisher<String> broadcaster =
-        new SimpMessagingPublisher<>(input, messagingTemplate, DESTINATION).get();
+    Publisher<String> output = Flux.from(input)
+        .doOnNext(new SimpMessageSender<>(messagingTemplate, DESTINATION))
+        .publish()
+        .refCount();
     input.next("a", "a", "a");
     
-    broadcaster.subscribe(new BaseSubscriber<String>() {});
+    output.subscribe(new BaseSubscriber<String>() {});
     input.next("b", "b");
 
     verify(messagingTemplate, never()).convertAndSend(DESTINATION, "a");
@@ -59,18 +65,20 @@ public class SimpMessagingPublisherTest {
   @Test
   public void testBroadcastsOnceWithMultipleSubscriber() {
     TestPublisher<String> input = TestPublisher.<String>create();
-    Publisher<String> broadcaster =
-        new SimpMessagingPublisher<>(input, messagingTemplate, DESTINATION).get();
+    Publisher<String> output = Flux.from(input)
+        .doOnNext(new SimpMessageSender<>(messagingTemplate, DESTINATION))
+        .publish()
+        .refCount();
         
     input.next("a", "a", "a");
     
     Subscriber<String> firstSubscriber = new BaseSubscriber<String>() {};
-    broadcaster.subscribe(firstSubscriber);
+    output.subscribe(firstSubscriber);
     
     input.next("b", "b");
 
     Subscriber<String> secondSubscriber = new BaseSubscriber<String>() {};
-    broadcaster.subscribe(secondSubscriber);
+    output.subscribe(secondSubscriber);
 
     input.next("c", "c", "c", "c");
 
@@ -87,13 +95,15 @@ public class SimpMessagingPublisherTest {
   @Test
   public void testStopsBroadcastingWithoutSubscribers() {
     TestPublisher<String> input = TestPublisher.<String>create();
-    Publisher<String> broadcaster =
-        new SimpMessagingPublisher<>(input, messagingTemplate, DESTINATION).get();
+    Publisher<String> output = Flux.from(input)
+        .doOnNext(new SimpMessageSender<>(messagingTemplate, DESTINATION))
+        .publish()
+        .refCount();
         
     input.next("a", "a", "a");
     
     BaseSubscriber<String> subscriber = new BaseSubscriber<String>() {};
-    broadcaster.subscribe(subscriber);
+    output.subscribe(subscriber);
     
     input.next("b", "b");
 
@@ -110,18 +120,20 @@ public class SimpMessagingPublisherTest {
   @Test
   public void testStopsBroadcastingWithoutSubscribersScenario2() {
     TestPublisher<String> input = TestPublisher.<String>create();
-    Publisher<String> broadcaster =
-        new SimpMessagingPublisher<>(input, messagingTemplate, DESTINATION).get();
+    Publisher<String> output = Flux.from(input)
+        .doOnNext(new SimpMessageSender<>(messagingTemplate, DESTINATION))
+        .publish()
+        .refCount();
         
     input.next("a", "a", "a");
     
     BaseSubscriber<String> firstSubscriber = new BaseSubscriber<String>() {};
-    broadcaster.subscribe(firstSubscriber);
+    output.subscribe(firstSubscriber);
     
     input.next("b", "b");
 
     BaseSubscriber<String> secondSubscriber = new BaseSubscriber<String>() {};
-    broadcaster.subscribe(secondSubscriber);
+    output.subscribe(secondSubscriber);
 
     input.next("c", "c", "c", "c");
 
@@ -145,13 +157,15 @@ public class SimpMessagingPublisherTest {
   @Test
   public void testRebroadcastingOnResubscribers() {
     TestPublisher<String> input = TestPublisher.<String>create();
-    Publisher<String> broadcaster =
-        new SimpMessagingPublisher<>(input, messagingTemplate, DESTINATION).get();
+    Publisher<String> output = Flux.from(input)
+        .doOnNext(new SimpMessageSender<>(messagingTemplate, DESTINATION))
+        .publish()
+        .refCount();
         
     input.next("a", "a", "a");
     
     BaseSubscriber<String> firstSubscriber = new BaseSubscriber<String>() {};
-    broadcaster.subscribe(firstSubscriber);
+    output.subscribe(firstSubscriber);
     
     input.next("b", "b");
 
@@ -161,7 +175,7 @@ public class SimpMessagingPublisherTest {
     input.next("c", "c", "c", "c");
 
     BaseSubscriber<String> secondSubscriber = new BaseSubscriber<String>() {};
-    broadcaster.subscribe(secondSubscriber);
+    output.subscribe(secondSubscriber);
 
     input.next("d", "d", "d");
 

@@ -1,4 +1,4 @@
-package com.trickl.flux.publishers;
+package com.trickl.flux.mappers;
 
 import java.text.MessageFormat;
 import java.time.Duration;
@@ -15,18 +15,18 @@ import reactor.test.StepVerifier;
 import reactor.test.publisher.TestPublisher;
 
 @RunWith(MockitoJUnitRunner.class)
-public class DifferentialPollPublisherTest {
+public class PollerTest {
 
   private static final Instant START_TIME = Instant.parse("2019-01-01T00:00:00Z");
 
   private class TestPoller {
     public Publisher<String> getDaysSinceLast(Instant from, Instant to) {      
-      if (from != null && to != null) {
+      if (from != Instant.MIN && to != Instant.MIN) {
         long days = ChronoUnit.DAYS.between(from, to);
         return Mono.<String>just(MessageFormat.format("{0} days", new Object[] {days}));
-      } else if (from != null) {
+      } else if (from != Instant.MIN) {
         return Mono.<String>just(MessageFormat.format("from {0}", from));
-      } else if (to != null) {
+      } else if (to != Instant.MIN) {
         return Mono.<String>just(MessageFormat.format("to {0}", to));
       }
       return Flux.<String>empty();
@@ -47,10 +47,8 @@ public class DifferentialPollPublisherTest {
   public void testSubscribesCorrectly() {
     TestPublisher<Instant> instantPublisher = TestPublisher.<Instant>create();    
 
-    DifferentialPollPublisher<String> publisher =
-        new DifferentialPollPublisher<>(
-          instantPublisher, poller::getDaysSinceLast);
-    Flux<String> output = publisher.get();
+    Flux<String> output = Flux.concat(instantPublisher, Mono.just(Instant.MIN))
+        .flatMap(new DifferentialMapper<>(poller::getDaysSinceLast, Instant.MIN));
 
     StepVerifier.create(output)
       .then(instantPublisher::complete)
@@ -62,10 +60,8 @@ public class DifferentialPollPublisherTest {
   public void testGeneratesFirstCorrectly() {
     TestPublisher<Instant> instantPublisher = TestPublisher.<Instant>create();    
 
-    DifferentialPollPublisher<String> publisher =
-        new DifferentialPollPublisher<>(
-          instantPublisher, poller::getDaysSinceLast);
-    Flux<String> output = publisher.get();
+    Flux<String> output = Flux.concat(instantPublisher, Mono.just(Instant.MIN))        
+        .flatMap(new DifferentialMapper<>(poller::getDaysSinceLast, Instant.MIN));
 
     StepVerifier.create(output)      
       .then(() -> instantPublisher.next(START_TIME))
@@ -80,10 +76,8 @@ public class DifferentialPollPublisherTest {
   public void testGeneratesMultipleCorrectly() {
     TestPublisher<Instant> instantPublisher = TestPublisher.<Instant>create();    
 
-    DifferentialPollPublisher<String> publisher =
-        new DifferentialPollPublisher<>(
-          instantPublisher, poller::getDaysSinceLast);
-    Flux<String> output = publisher.get();
+    Flux<String> output = Flux.concat(instantPublisher, Mono.just(Instant.MIN))
+        .flatMap(new DifferentialMapper<>(poller::getDaysSinceLast, Instant.MIN));
 
     StepVerifier.create(output)
       .then(() -> instantPublisher.next(START_TIME))

@@ -1,7 +1,6 @@
 package com.trickl.flux.websocket;
 
 import java.net.URI;
-import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.java.Log;
 import org.reactivestreams.Publisher;

@@ -1,6 +1,6 @@
 package com.trickl.flux.websocket;
 
-import com.trickl.flux.transformers.ThrowableMapTransformer;
+import com.trickl.flux.mappers.ThrowableMapper;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -26,9 +26,8 @@ public class BinaryWebSocketHandler implements WebSocketHandler {
 
   @Override
   public Mono<Void> handle(WebSocketSession session) {
-    ThrowableMapTransformer<WebSocketMessage, WebSocketMessage> messageHandler = 
-        new ThrowableMapTransformer<>(this::handleMessage);
-    Mono<Void> input = messageHandler.apply(session.receive()).then();
+    Mono<Void> input = session.receive().flatMap(
+        new ThrowableMapper<>(this::handleMessage)).then();
 
     Mono<Void> output =
         session.send(

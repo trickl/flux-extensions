@@ -1,4 +1,4 @@
-package com.trickl.flux.transformers;
+package com.trickl.flux.mappers;
 
 import java.util.function.Function;
 import lombok.RequiredArgsConstructor;
@@ -7,7 +7,8 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 @RequiredArgsConstructor
-public class ThrowableMapTransformer<T, S> implements Function<Publisher<T>, Flux<S>> {
+public class ThrowableMapper<T, S> implements
+    Function<T, Publisher<? extends S>> {
 
   @FunctionalInterface
   public interface ThrowingFunction<T, S, E extends Exception> {
@@ -16,16 +17,8 @@ public class ThrowableMapTransformer<T, S> implements Function<Publisher<T>, Flu
 
   private final ThrowingFunction<T, S, ?> mapper;
 
-  /**
-   * Get a flux of messages from the stream.
-   *
-   * @return A flux of (untyped) objects
-   */
-  public Flux<S> apply(Publisher<T> source) {
-    return Flux.from(source).flatMap(this::map);
-  }
-
-  protected Publisher<S> map(T t) {
+  @Override
+  public Publisher<S> apply(T t) {
     try {
       return Mono.just(mapper.apply(t));
     } catch (Exception throwable) {

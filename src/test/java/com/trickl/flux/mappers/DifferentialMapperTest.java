@@ -1,20 +1,22 @@
-package com.trickl.flux.transformers;
+package com.trickl.flux.mappers;
 
 import org.junit.Test;
 import org.reactivestreams.Publisher;
 
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 import reactor.test.publisher.TestPublisher;
 
-public class DifferentialTransformerTest {
-  DifferentialTransformer<String, String> dashSeparateString =
-      new DifferentialTransformer<>((a, b) -> a + "-" + b);
+public class DifferentialMapperTest {
+  DifferentialMapper<String, String> dashSeparateString =
+      new DifferentialMapper<>((a, b) -> Mono.just(a + "-" + b), "null");
 
   @Test
   public void correctOutputWithZeroInputs() {
     Publisher<String> input = TestPublisher.<String>create();
 
-    Publisher<String> output = dashSeparateString.apply(input);
+    Publisher<String> output = Flux.from(input).flatMap(dashSeparateString);
     
     StepVerifier.create(output)
       .expectComplete();
@@ -26,7 +28,7 @@ public class DifferentialTransformerTest {
         .next("a");
 
 
-    Publisher<String> output = dashSeparateString.apply(input);
+    Publisher<String> output = Flux.from(input).flatMap(dashSeparateString);
     
     StepVerifier.create(output)
       .expectNext("null-a")
@@ -44,7 +46,7 @@ public class DifferentialTransformerTest {
         .next("e");
 
 
-    Publisher<String> output = dashSeparateString.apply(input);
+    Publisher<String> output = Flux.from(input).flatMap(dashSeparateString);
     
     StepVerifier.create(output)
       .expectNext("null-a")

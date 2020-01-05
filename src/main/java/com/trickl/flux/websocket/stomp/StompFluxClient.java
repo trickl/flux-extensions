@@ -2,7 +2,7 @@ package com.trickl.flux.websocket.stomp;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.trickl.flux.transformers.ThrowableMapTransformer;
+import com.trickl.flux.mappers.ThrowableMapper;
 import com.trickl.flux.websocket.stomp.StompFrame;
 import com.trickl.flux.websocket.stomp.frames.StompConnectedFrame;
 import com.trickl.flux.websocket.stomp.frames.StompMessageFrame;
@@ -62,7 +62,7 @@ public class StompFluxClient {
    * Connect to the stomp transport.
    */
   public void connect() {
-    if (isConnected.get() && isConnecting.compareAndSet(false, true)) {
+    if (isConnected.get() || !isConnecting.compareAndSet(false, true)) {
       // Already connected
       return;
     }
@@ -153,14 +153,12 @@ public class StompFluxClient {
     connect();
     subscriptionDestinationIdMap.computeIfAbsent(destination, this::subscribeDestination);      
 
-    ThrowableMapTransformer<StompMessageFrame, T> messageTransformer = 
-        new ThrowableMapTransformer<>(frame -> readStompMessageFrame(frame, messageType));
-
     Flux<StompMessageFrame> messageFrameFlux = sharedStream.get()
         .filter(frame -> frame.getDestination().equals(destination))
         .doOnTerminate(() -> unsubscribe(destination));
 
-    return messageTransformer.apply(messageFrameFlux);
+    return messageFrameFlux.flatMap(
+        new ThrowableMapper<>(frame -> readStompMessageFrame(frame, messageType)));
   }
 
   protected void unsubscribe(String destination) {
