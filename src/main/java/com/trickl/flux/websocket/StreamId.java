@@ -10,7 +10,7 @@ import lombok.Singular;
 @Builder
 @Data
 @EqualsAndHashCode
-public class WebSocketRequest {
+public class StreamId {
   protected final WebSocketDestinationType destinationType;
   protected final String channelType;
   protected final String userName;

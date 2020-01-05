@@ -36,7 +36,7 @@ public class SimpMessageSenderTest {
   public void testDoesNothingWithoutSubscribers() {
     TestPublisher<String> input = TestPublisher.<String>create();
 
-    Publisher<String> output = Flux.from(input)
+    Flux.from(input)
         .doOnNext(new SimpMessageSender<>(messagingTemplate, DESTINATION))
         .publish()
         .refCount();

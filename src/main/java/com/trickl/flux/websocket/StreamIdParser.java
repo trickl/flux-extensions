@@ -7,7 +7,7 @@ import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class WebSocketRequestBuilder implements Function<String, Optional<WebSocketRequest>> {
+public class StreamIdParser implements Function<String, Optional<StreamId>> {
 
   private static final String TOPIC_PREFIX_PATTERN = "\\/(?<destinationType>topic)";
   private static final String USER_QUEUE_PREFIX_PATTERN =
@@ -22,11 +22,11 @@ public class WebSocketRequestBuilder implements Function<String, Optional<WebSoc
 
   
   @Override
-  public Optional<WebSocketRequest> apply(String destination) {
+  public Optional<StreamId> apply(String destination) {
     Matcher matcher = topicPattern.matcher(destination);
 
-    WebSocketRequest.WebSocketRequestBuilder builder 
-        = WebSocketRequest.builder();
+    StreamId.StreamIdBuilder builder 
+        = StreamId.builder();
 
     if (!matcher.matches()) {
       matcher = userQueuePattern.matcher(destination);
