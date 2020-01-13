@@ -1,9 +1,14 @@
 package com.trickl.flux.websocket;
 
+import com.trickl.exceptions.NoSuchStreamException;
 import com.trickl.exceptions.SubscriptionFailedException;
 import com.trickl.flux.consumers.SimpMessageSender;
+import com.trickl.model.streams.StreamDetails;
+import com.trickl.model.streams.StreamId;
+import com.trickl.model.streams.SubscriptionDetails;
 
 import java.text.MessageFormat;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -47,13 +52,15 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
 
   private final Map<StreamId, Optional<Flux<T>>> fluxes = new ConcurrentHashMap<>();
 
-  private final Map<StreamId, StreamDetail> streams = new ConcurrentHashMap<>();
+  private final Map<String, StreamDetails> streams = new ConcurrentHashMap<>();
 
   private final Map<String, Subscription> subscriptions = new ConcurrentHashMap<>();
 
-  private final Map<String, SubscriptionDetail> subscriptionDetails = new ConcurrentHashMap<>();
+  private final Map<String, SubscriptionDetails> subscriptionDetails = new ConcurrentHashMap<>();
 
   private final StreamIdParser streamIdParser = new StreamIdParser();
+
+  private final Duration streamDisconnectGracePeriod = Duration.ofSeconds(5);
 
   @Override
   public boolean supportsEventType(Class<? extends ApplicationEvent> eventType) {
@@ -70,14 +77,14 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
     return Ordered.LOWEST_PRECEDENCE;
   }
 
-  protected void subscribe(SubscriptionDetail subscription) 
+  protected void subscribe(SubscriptionDetails subscription) 
       throws SubscriptionFailedException {
     String destination = subscription.getDestination();
     StreamId streamId = streamIdParser.apply(destination)
         .orElseThrow(() -> new SubscriptionFailedException(
             MessageFormat.format("Destination: {0} not found.", destination)));
-    StreamDetail stream = StreamDetail.builder()
-        .id(streamId)
+    StreamDetails stream = StreamDetails.builder()
+        .destination(destination)
         .build();
     
     SimpMessageSender<T> messageSender = new SimpMessageSender<>(messagingTemplate, destination);
@@ -87,11 +94,11 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
             MessageFormat.format("Destination: {0} not found.", destination)))
         .doOnNext(value -> handleStreamValue(stream, messageSender, value))
         .doOnSubscribe(sub -> handleStreamSubscription(stream, sub))
-        .doOnCancel(() -> handleStreamCancel(stream))
-        .doOnError(error -> handleStreamError(stream, error))
-        .doOnComplete(() -> handleStreamComplete(stream))        
+        .doOnCancel(() -> handleStreamCancel(streamId, stream))
+        .doOnError(error -> handleStreamError(streamId, stream, error))
+        .doOnComplete(() -> handleStreamComplete(streamId, stream))        
         .publish()
-        .refCount();
+        .refCount(1, streamDisconnectGracePeriod);
 
     connectableFlux
         .doOnSubscribe(sub -> handleSubscription(subscription, stream, sub))  
@@ -101,37 +108,37 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
         .subscribe();      
   }
 
-  protected void handleStreamSubscription(StreamDetail stream, Subscription subscription) {
+  protected void handleStreamSubscription(StreamDetails stream, Subscription subscription) {
     stream.setSubscriptionTime(Instant.now());
-    streams.put(stream.getId(), stream);
+    streams.put(stream.getDestination(), stream);
   }
 
   protected void handleStreamValue(
-      StreamDetail stream, SimpMessageSender<T> messageSender, T value) {
+      StreamDetails stream, SimpMessageSender<T> messageSender, T value) {
     messageSender.accept(value);
     stream.setMessageCount(stream.getMessageCount() + 1);
     stream.setLastMessageTime(Instant.now());
   }
 
-  protected void handleStreamCancel(StreamDetail stream) {    
+  protected void handleStreamCancel(StreamId streamId,StreamDetails stream) {    
     stream.setCancelTime(Instant.now());
-    setStreamTerminated(stream.getId());
+    setStreamTerminated(streamId, stream.getDestination());
   }
 
-  protected void handleStreamError(StreamDetail stream, Throwable error) {
+  protected void handleStreamError(StreamId streamId,StreamDetails stream, Throwable error) {
     stream.setErrorTime(Instant.now());
     stream.setErrorMessage(error.getLocalizedMessage());
-    setStreamTerminated(stream.getId());
+    setStreamTerminated(streamId, stream.getDestination());
   }
 
-  protected void handleStreamComplete(StreamDetail stream) {
+  protected void handleStreamComplete(StreamId streamId, StreamDetails stream) {
     stream.setCompleteTime(Instant.now());
-    setStreamTerminated(stream.getId());
+    setStreamTerminated(streamId, stream.getDestination());
   }
 
-  protected void setStreamTerminated(StreamId id) {
-    fluxes.computeIfPresent(id, (streamId, flux) -> {
-      streams.computeIfPresent(streamId,
+  protected void setStreamTerminated(StreamId streamId, String destination) {
+    fluxes.computeIfPresent(streamId, (id, flux) -> {
+      streams.computeIfPresent(destination,
           (i, detail) -> {
             detail.setTerminated(true);
             return detail; 
@@ -141,36 +148,47 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
   }
 
   protected void handleSubscription(
-      SubscriptionDetail detail, StreamDetail stream, Subscription subscription) {
+      SubscriptionDetails detail, StreamDetails stream, Subscription subscription) {
     detail.setSubscriptionTime(Instant.now());
     stream.setSubscriberCount(stream.getSubscriberCount() + 1);
-    subscriptions.put(detail.getSubscriptionId(), subscription);
-    subscriptionDetails.put(detail.getSubscriptionId(), detail);
+    subscriptions.put(detail.getId(), subscription);
+    subscriptionDetails.put(detail.getId(), detail);
   }
 
-  protected void handleSubscriberCancel(SubscriptionDetail subscription, StreamDetail stream) {
+  protected void handleSubscriberCancel(SubscriptionDetails subscription, StreamDetails stream) {
     stream.setSubscriberCount(stream.getSubscriberCount() - 1);
     subscription.setCancelTime(Instant.now());
   }
 
   protected void handleSubscriberError(
-      SubscriptionDetail subscription, StreamDetail stream, Throwable error) {
+      SubscriptionDetails subscription, StreamDetails stream, Throwable error) {
     subscription.setErrorTime(Instant.now());
     subscription.setErrorMessage(error.getLocalizedMessage());
   }
 
-  protected void handleSubscriberComplete(SubscriptionDetail subscription, StreamDetail stream) {
+  protected void handleSubscriberComplete(SubscriptionDetails subscription, StreamDetails stream) {
     subscription.setCompleteTime(Instant.now());
   }
 
-  protected void unsubscribe(String subscriptionId) {
+  /**
+   * Cancel all subscriptions.
+   */
+  public void unsubscribeAll() {
+    subscriptions.keySet().forEach(this::unsubscribe);
+  }
+
+  /**
+   * Cancel a subscription.
+   * @param subscriptionId The subscription to unsubscribe
+   */
+  public void unsubscribe(String subscriptionId) {
     subscriptions.computeIfPresent(subscriptionId,
         (id, subscription) -> {
           subscription.cancel();
           subscriptionDetails.computeIfPresent(subscriptionId,
-              (subId, detail) -> {
-                detail.setCancelled(true);
-                return detail; 
+              (subId, details) -> {
+                details.setCancelTime(Instant.now());
+                return details; 
               });
           return null;
         });
@@ -191,10 +209,10 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
       Assert.state(destination != null, "No destination");
       
       try {
-        SubscriptionDetail subscriptionInfo = SubscriptionDetail.builder()
+        SubscriptionDetails subscriptionInfo = SubscriptionDetails.builder()
             .userName(accessor.getUser() != null ? accessor.getUser().getName() : null)
-            .destination(destination)
-            .subscriptionId(accessor.getSubscriptionId())
+            .id(accessor.getSubscriptionId())
+            .destination(destination)            
             .sessionId(accessor.getSessionId())
             .build();
         subscribe(subscriptionInfo);
@@ -216,11 +234,11 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
     }
   }
 
-  public List<SubscriptionDetail> getSubscriptionDetails() {
+  public List<SubscriptionDetails> getSubscriptionDetails() {
     return subscriptionDetails.values().stream().collect(Collectors.toList());
   }
 
-  public List<StreamDetail> getStreams() {
+  public List<StreamDetails> getStreams() {
     return streams.values().stream().collect(Collectors.toList());
   }
 }

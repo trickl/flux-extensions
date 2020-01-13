@@ -22,6 +22,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.Level;
 
 import lombok.RequiredArgsConstructor;
+import lombok.Setter;
 import lombok.extern.java.Log;
 
 import org.reactivestreams.Publisher;
@@ -58,6 +59,12 @@ public class StompFluxClient {
 
   private final AtomicBoolean isConnecting = new AtomicBoolean(false);
 
+  @Setter
+  private long maxRetriesOnError = 12;
+
+  @Setter
+  private Duration retryOnErrorFirstBackoff = Duration.ofSeconds(1);
+
   /**
    * Connect to the stomp transport.
    */
@@ -86,7 +93,7 @@ public class StompFluxClient {
           .cast(StompMessageFrame.class)
           .onErrorContinue(JsonProcessingException.class, this::warnAndDropError)        
           .doAfterTerminate(this::handleTerminateStream)
-          .repeatWhen(this::reconnect)
+          .retryBackoff(maxRetriesOnError, retryOnErrorFirstBackoff)
           .publish()
           .refCount();
 
@@ -96,16 +103,8 @@ public class StompFluxClient {
     }
   }
 
-  protected Publisher<Long> reconnect(Flux<Long> emittedEachAttempt) {
-    return emittedEachAttempt.delayUntil(attempt -> {
-      if (attempt == 0) {
-        return Mono.just(attempt);
-      }
-      return Mono.delay(Duration.ofSeconds(5000));      
-    });
-  }
-
   protected void handleTerminateStream() {
+    isConnected.set(false);
     sharedStream.set(null);
   }
 
@@ -113,10 +112,6 @@ public class StompFluxClient {
   protected void handleConnectStream() {
     isConnected.set(true);
     resubscribeAll();
-  }
-
-  protected void handleDisconnectStream() {
-    isConnected.set(false);
   }
 
   protected void warnAndDropError(Throwable ex, Object value) {
@@ -127,8 +122,12 @@ public class StompFluxClient {
             new Object[] {ex.getMessage(), value}));
   }
 
-  protected String subscribeDestination(String destination) {    
-    int subscriptionNumber = maxSubscriptionNumber.incrementAndGet();
+  protected String subscribeDestination(String destination) {
+    if (!isConnected.get()) {
+      return "sub-disconnected";
+    }
+
+    int subscriptionNumber = maxSubscriptionNumber.getAndIncrement();
     String subscriptionId = MessageFormat.format("sub-{0}", subscriptionNumber);
     StompFrame frame = StompSubscribeFrame.builder()
         .destination(destination)
@@ -152,7 +151,7 @@ public class StompFluxClient {
   public <T> Flux<T> subscribe(String destination, Class<T> messageType) {
     connect();
     subscriptionDestinationIdMap.computeIfAbsent(destination, this::subscribeDestination);      
-
+    
     Flux<StompMessageFrame> messageFrameFlux = sharedStream.get()
         .filter(frame -> frame.getDestination().equals(destination))
         .doOnTerminate(() -> unsubscribe(destination));
