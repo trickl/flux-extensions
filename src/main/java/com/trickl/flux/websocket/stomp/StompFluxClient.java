@@ -2,9 +2,14 @@ package com.trickl.flux.websocket.stomp;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.trickl.exceptions.MissingHeartbeatException;
+import com.trickl.exceptions.RemoteStreamException;
 import com.trickl.flux.mappers.ThrowableMapper;
+import com.trickl.flux.publishers.ConditionalTimeoutPublisher;
 import com.trickl.flux.websocket.stomp.StompFrame;
 import com.trickl.flux.websocket.stomp.frames.StompConnectedFrame;
+import com.trickl.flux.websocket.stomp.frames.StompErrorFrame;
+import com.trickl.flux.websocket.stomp.frames.StompHeartbeatFrame;
 import com.trickl.flux.websocket.stomp.frames.StompMessageFrame;
 import com.trickl.flux.websocket.stomp.frames.StompSendFrame;
 import com.trickl.flux.websocket.stomp.frames.StompSubscribeFrame;
@@ -34,6 +39,7 @@ import reactor.core.publisher.EmitterProcessor;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 @Log
 @RequiredArgsConstructor
@@ -42,12 +48,24 @@ public class StompFluxClient {
   private final URI transportUri;
   private final Mono<HttpHeaders> webSocketHeadersProvider;
   private final ObjectMapper objectMapper;
+  private final Duration heartbeatSendFrequency;
+  private final Duration heartbeatReceiveFrequency;
 
   private final EmitterProcessor<StompFrame> responseProcessor = EmitterProcessor.create();
 
   private final EmitterProcessor<StompFrame> streamRequestProcessor = EmitterProcessor.create();
 
   private final FluxSink<StompFrame> streamRequestSink = streamRequestProcessor.sink();
+
+  private final EmitterProcessor<Duration> heartbeatSendProcessor = EmitterProcessor.create();
+
+  private final FluxSink<Duration> heartbeatSendSink = heartbeatSendProcessor.sink();
+
+  private final EmitterProcessor<Duration> heartbeatExpectationProcessor
+       = EmitterProcessor.create();
+
+  private final FluxSink<Duration> heartbeatExpectationSink
+       = heartbeatExpectationProcessor.sink();
 
   private final AtomicInteger maxSubscriptionNumber = new AtomicInteger(0);
 
@@ -77,23 +95,34 @@ public class StompFluxClient {
     try {
       RawStompFluxClient stompFluxClient =
           new RawStompFluxClient(
-              webSocketClient, transportUri, webSocketHeadersProvider);
+              webSocketClient,
+              transportUri,
+              webSocketHeadersProvider,
+              heartbeatSendFrequency,
+              heartbeatReceiveFrequency);
+
+      Flux<StompFrame> heartbeats = heartbeatSendProcessor.switchMap(this::createHeartbeats);
+      Flux<StompMessageFrame> heartbeatExpectation = heartbeatExpectationProcessor
+          .switchMap(this::listenHeartbeats);
 
       Publisher<StompFrame> sendWithResponse =
-          Flux.merge(streamRequestProcessor, responseProcessor);
+          Flux.merge(streamRequestProcessor, heartbeats, responseProcessor);
 
       Flux<StompMessageFrame> stream = stompFluxClient.get(sendWithResponse)        
           .doOnNext(frame -> {
             log.info("Got frame " + frame.getClass());
             if (StompConnectedFrame.class.equals(frame.getClass())) {                
-              handleConnectStream();
+              handleConnectStream((StompConnectedFrame) frame);
             }
           })
+          .flatMap(new ThrowableMapper<StompFrame, StompFrame>(this::handleErrorFrame))
+          .mergeWith(heartbeatExpectation)
           .filter(frame -> frame.getHeaderAccessor().getCommand().equals(StompCommand.MESSAGE))
           .cast(StompMessageFrame.class)
-          .onErrorContinue(JsonProcessingException.class, this::warnAndDropError)        
+          .onErrorContinue(JsonProcessingException.class, this::warnAndDropError)
+          .doOnError(this::sendErrorFrame) 
           .doAfterTerminate(this::handleTerminateStream)
-          .retryBackoff(maxRetriesOnError, retryOnErrorFirstBackoff)
+          .retryBackoff(maxRetriesOnError, retryOnErrorFirstBackoff)          
           .publish()
           .refCount();
 
@@ -109,9 +138,60 @@ public class StompFluxClient {
   }
 
 
-  protected void handleConnectStream() {
+  protected void handleConnectStream(StompConnectedFrame frame) {
+    expectHeartbeats(frame.getHeartbeatSendFrequency());
+    sendHeartbeats(frame.getHeartbeatReceiveFrequency());
     isConnected.set(true);
     resubscribeAll();
+  }
+
+  protected StompFrame handleErrorFrame(StompFrame frame) throws RemoteStreamException {
+    if (StompErrorFrame.class.equals(frame.getClass())) {                
+      throw new RemoteStreamException(((StompErrorFrame) frame).getMessage());
+    }
+    return frame;
+  }
+
+  protected void sendErrorFrame(Throwable error) {
+    StompFrame frame = StompErrorFrame.builder()
+        .message(error.getLocalizedMessage())
+        .build();
+    streamRequestSink.next(frame);
+  }
+
+  protected Publisher<StompHeartbeatFrame> createHeartbeats(Duration frequency) {
+    if (frequency.isZero()) {
+      return Flux.empty();
+    } 
+
+    return Flux.interval(frequency)
+      .log("HEARTBEAT")
+      .map(count -> new StompHeartbeatFrame())
+      .startWith(new StompHeartbeatFrame());
+  }
+
+  protected Publisher<StompMessageFrame> listenHeartbeats(Duration frequency) {
+    if (frequency.isZero() || sharedStream.get() == null) {
+      return Flux.empty();
+    } 
+
+    return new ConditionalTimeoutPublisher<>(
+        sharedStream.get(),          
+        frequency,
+        value -> true,
+        error -> new MissingHeartbeatException("No heartbeat within " + frequency, error),
+        null,
+        Schedulers.parallel()).get();
+  }
+
+  protected void sendHeartbeats(Duration frequency) {
+    log.info("Sending heartbeats every " + frequency.toString());
+    heartbeatSendSink.next(frequency);    
+  }
+
+  protected void expectHeartbeats(Duration frequency) {
+    log.info("Expecting heartbeats every " + frequency.toString());
+    heartbeatExpectationSink.next(frequency);
   }
 
   protected void warnAndDropError(Throwable ex, Object value) {

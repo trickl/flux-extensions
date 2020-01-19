@@ -2,6 +2,7 @@ package com.trickl.flux.publishers;
 
 import java.time.Duration;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.logging.Level;
@@ -22,7 +23,7 @@ public class ConditionalTimeoutPublisher<T> implements Supplier<Mono<T>>  {
   private final Publisher<T> source;
   private final Duration timeout;
   private final Predicate<? super  T> condition;  
-  private final Supplier<Throwable> onTimeoutThrow;
+  private final Function<TimeoutException, Throwable> onTimeoutThrow;
   private final Runnable onTimeoutDo;
   private final Scheduler scheduler;
 
@@ -49,7 +50,7 @@ public class ConditionalTimeoutPublisher<T> implements Supplier<Mono<T>>  {
         .onErrorMap(error -> {
           if (error instanceof TimeoutException 
               && onTimeoutThrow != null) {
-            return onTimeoutThrow.get();
+            return onTimeoutThrow.apply((TimeoutException) error);
           } 
           return error;          
         })

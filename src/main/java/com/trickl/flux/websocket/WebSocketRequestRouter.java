@@ -1,6 +1,5 @@
 package com.trickl.flux.websocket;
 
-import com.trickl.exceptions.NoSuchStreamException;
 import com.trickl.exceptions.SubscriptionFailedException;
 import com.trickl.flux.consumers.SimpMessageSender;
 import com.trickl.model.streams.StreamDetails;
@@ -29,8 +28,6 @@ import org.springframework.lang.Nullable;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
-import org.springframework.messaging.simp.user.SimpSubscription;
-import org.springframework.messaging.simp.user.SimpUserRegistry;
 import org.springframework.messaging.support.MessageHeaderAccessor;
 import org.springframework.util.Assert;
 import org.springframework.web.socket.messaging.AbstractSubProtocolEvent;
@@ -45,8 +42,6 @@ import reactor.core.publisher.Flux;
 public class WebSocketRequestRouter<T> implements SmartApplicationListener {
 
   private final Function<StreamId, Optional<Flux<T>>> fluxFactory;
-
-  private final SimpUserRegistry simpUserRegistry;
 
   private final SimpMessagingTemplate messagingTemplate;
 
@@ -182,6 +177,7 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
    * @param subscriptionId The subscription to unsubscribe
    */
   public void unsubscribe(String subscriptionId) {
+    log.info("Unsubscribing " + subscriptionId);
     subscriptions.computeIfPresent(subscriptionId,
         (id, subscription) -> {
           subscription.cancel();
@@ -220,13 +216,11 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
         log.log(Level.WARNING, "Subscription failed", ex);
       }
     } else if (event instanceof SessionDisconnectEvent) {
-      // Unsubscribe any hanging subscriptions
+      // TODO: Not very efficient
       String sessionId = accessor.getSessionId();
-      simpUserRegistry
-          .findSubscriptions(
-              subscription -> subscription.getSession().getId().equals(sessionId))
-          .stream()
-          .map(SimpSubscription::getId)
+      subscriptionDetails.values().stream()
+          .filter(sub -> sub.getSessionId().equals(sessionId))
+          .map(SubscriptionDetails::getId)
           .forEach(this::unsubscribe);
 
     } else if (event instanceof SessionUnsubscribeEvent) {

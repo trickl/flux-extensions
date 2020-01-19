@@ -29,7 +29,7 @@ public class StompReceiptFrame implements StompFrame {
    * @param headerAccessor The header accessor
    * @return A typed message
    */
-  public static StompFrame create(StompHeaderAccessor headerAccessor) {
+  public static StompFrame from(StompHeaderAccessor headerAccessor) {
     return StompReceiptFrame.builder()
         .receiptId(headerAccessor.getReceiptId())
       .build();

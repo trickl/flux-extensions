@@ -40,7 +40,7 @@ public class StompMessageFrame implements StompFrame {
    * @param payload The message payload
    * @return A typed message
    */
-  public static StompFrame create(
+  public static StompFrame from(
       StompHeaderAccessor headerAccessor,
       byte[] payload) throws StompConversionException {
     String body = new String(payload, StandardCharsets.UTF_8);

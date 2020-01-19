@@ -2,6 +2,8 @@ package com.trickl.flux.websocket.stomp.frames;
 
 import com.trickl.flux.websocket.stomp.StompFrame;
 
+import java.time.Duration;
+
 import lombok.Builder;
 import lombok.Data;
 
@@ -16,6 +18,12 @@ public class StompConnectFrame implements StompFrame {
   protected String acceptVersion;
   protected String host;
 
+  @Builder.Default
+  protected Duration heartbeatSendFrequency = Duration.ZERO;
+
+  @Builder.Default
+  protected Duration heartbeatReceiveFrequency = Duration.ZERO;
+
   /**
    * Get the stomp headers for this message.
    */
@@ -23,6 +31,9 @@ public class StompConnectFrame implements StompFrame {
     StompHeaderAccessor stompHeaderAccessor = StompHeaderAccessor.create(StompCommand.CONNECT);
     stompHeaderAccessor.setAcceptVersion(acceptVersion);
     stompHeaderAccessor.setHost(host);
+    stompHeaderAccessor.setHeartbeat(
+        heartbeatSendFrequency.toMillis(),
+        heartbeatReceiveFrequency.toMillis());
     return stompHeaderAccessor;
   }
 

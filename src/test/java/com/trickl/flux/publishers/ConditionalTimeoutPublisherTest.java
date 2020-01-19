@@ -23,7 +23,7 @@ public class ConditionalTimeoutPublisherTest {
             input,          
             Duration.ofSeconds(15),
             value -> true,
-            TimeoutException::new,
+            error -> error,
             null,
             Schedulers.parallel());
 
@@ -48,7 +48,7 @@ public class ConditionalTimeoutPublisherTest {
             input,          
             Duration.ofSeconds(15),
             value -> true,
-            TimeoutException::new,
+            error -> error,
             null,
             Schedulers.parallel());
 

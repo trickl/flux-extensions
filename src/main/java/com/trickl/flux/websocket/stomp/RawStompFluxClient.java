@@ -6,6 +6,7 @@ import com.trickl.flux.websocket.stomp.frames.StompConnectFrame;
 import com.trickl.flux.websocket.stomp.frames.StompDisconnectFrame;
 
 import java.net.URI;
+import java.time.Duration;
 
 import lombok.RequiredArgsConstructor;
 
@@ -23,6 +24,8 @@ public class RawStompFluxClient {
   private final WebSocketClient webSocketClient;
   private final URI transportUri;
   private final Mono<HttpHeaders> webSocketHeadersProvider;
+  private final Duration heartbeatSendFrequency;
+  private final Duration heartbeatReceiveFrequency;
 
   /**
    * Connect to a stomp service.
@@ -54,6 +57,8 @@ public class RawStompFluxClient {
   protected void onConnect(FluxSink<StompFrame> frameSink) {
     StompConnectFrame connectFrame = StompConnectFrame.builder()
         .acceptVersion("1.0,1.1,1.2")
+        .heartbeatSendFrequency(heartbeatSendFrequency)
+        .heartbeatReceiveFrequency(heartbeatReceiveFrequency)        
         .host(transportUri.getHost())
         .build();
     frameSink.next(connectFrame);
