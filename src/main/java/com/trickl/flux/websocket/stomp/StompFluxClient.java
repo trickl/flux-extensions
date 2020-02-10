@@ -3,9 +3,9 @@ package com.trickl.flux.websocket.stomp;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trickl.exceptions.MissingHeartbeatException;
+import com.trickl.exceptions.NoDataException;
 import com.trickl.exceptions.RemoteStreamException;
 import com.trickl.flux.mappers.ThrowableMapper;
-import com.trickl.flux.publishers.ConditionalTimeoutPublisher;
 import com.trickl.flux.websocket.stomp.StompFrame;
 import com.trickl.flux.websocket.stomp.frames.StompConnectedFrame;
 import com.trickl.flux.websocket.stomp.frames.StompErrorFrame;
@@ -21,6 +21,7 @@ import java.text.MessageFormat;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -39,7 +40,6 @@ import reactor.core.publisher.EmitterProcessor;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
 
 @Log
 @RequiredArgsConstructor
@@ -103,7 +103,7 @@ public class StompFluxClient {
 
       Flux<StompFrame> heartbeats = heartbeatSendProcessor.switchMap(this::createHeartbeats);
       Flux<StompMessageFrame> heartbeatExpectation = heartbeatExpectationProcessor
-          .switchMap(this::listenHeartbeats);
+          .switchMap(this::timeoutNoHeartbeat);
 
       Publisher<StompFrame> sendWithResponse =
           Flux.merge(streamRequestProcessor, heartbeats, responseProcessor);
@@ -118,7 +118,7 @@ public class StompFluxClient {
           .flatMap(new ThrowableMapper<StompFrame, StompFrame>(this::handleErrorFrame))
           .mergeWith(heartbeatExpectation)
           .filter(frame -> frame.getHeaderAccessor().getCommand().equals(StompCommand.MESSAGE))
-          .cast(StompMessageFrame.class)
+          .cast(StompMessageFrame.class)          
           .onErrorContinue(JsonProcessingException.class, this::warnAndDropError)
           .doOnError(this::sendErrorFrame) 
           .doAfterTerminate(this::handleTerminateStream)
@@ -165,23 +165,23 @@ public class StompFluxClient {
     } 
 
     return Flux.interval(frequency)
-      .log("HEARTBEAT")
       .map(count -> new StompHeartbeatFrame())
       .startWith(new StompHeartbeatFrame());
   }
 
-  protected Publisher<StompMessageFrame> listenHeartbeats(Duration frequency) {
+  protected Publisher<StompMessageFrame> timeoutNoHeartbeat(Duration frequency) {
     if (frequency.isZero() || sharedStream.get() == null) {
       return Flux.empty();
     } 
 
-    return new ConditionalTimeoutPublisher<>(
-        sharedStream.get(),          
-        frequency,
-        value -> true,
-        error -> new MissingHeartbeatException("No heartbeat within " + frequency, error),
-        null,
-        Schedulers.parallel()).get();
+    return sharedStream.get()
+        .timeout(frequency)
+        .onErrorMap(error -> {
+          if (error instanceof TimeoutException) {
+            return new MissingHeartbeatException("No heartbeat within " + frequency, error);
+          }          
+          return error; 
+        }).ignoreElements();
   }
 
   protected void sendHeartbeats(Duration frequency) {
@@ -225,15 +225,26 @@ public class StompFluxClient {
   /**
    * Subscribe to a destination.
    * 
-   * @param destination The destination channel   
+   * @param destination The destination channel
+   * @param minMessageFrequency Unsubscribe if no message received in this time
    * @return A flux of messages on that channel
    */
-  public <T> Flux<T> subscribe(String destination, Class<T> messageType) {
+  public <T> Flux<T> subscribe(
+      String destination,
+      Class<T> messageType,
+      Duration minMessageFrequency) {
     connect();
     subscriptionDestinationIdMap.computeIfAbsent(destination, this::subscribeDestination);      
     
     Flux<StompMessageFrame> messageFrameFlux = sharedStream.get()
         .filter(frame -> frame.getDestination().equals(destination))
+        .timeout(minMessageFrequency)
+        .onErrorMap(error -> {
+          if (error instanceof TimeoutException) {
+            return new NoDataException("No data within " + minMessageFrequency, error);
+          }          
+          return error; 
+        })
         .doOnTerminate(() -> unsubscribe(destination));
 
     return messageFrameFlux.flatMap(
