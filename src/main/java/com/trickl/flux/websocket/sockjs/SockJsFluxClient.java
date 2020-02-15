@@ -26,6 +26,7 @@ import reactor.core.publisher.EmitterProcessor;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 @Log
 @RequiredArgsConstructor
@@ -64,6 +65,7 @@ public class SockJsFluxClient {
         .flatMap(
             new ThrowableMapper<String, SockJsFrame>(message -> read(message, responseSink)))
         .onErrorContinue(JsonProcessingException.class, this::warnAndDropError)
+        .publishOn(Schedulers.parallel())
         .publish()
         .refCount();
   }
@@ -91,6 +93,10 @@ public class SockJsFluxClient {
   }
 
   protected String write(SockJsFrame request) throws JsonProcessingException {
-    return objectMapper.writeValueAsString(request);
+    if (request.getClass().equals(SockJsMessage.class)) {
+      return ((SockJsMessage) request).getPayload();
+    }
+    String errorMessage = MessageFormat.format("Sending {0} is not supported.", request.getClass());
+    throw new UnsupportedOperationException(errorMessage);
   }
 }

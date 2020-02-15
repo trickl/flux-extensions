@@ -12,6 +12,7 @@ import reactor.core.publisher.EmitterProcessor;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 @Log
 @RequiredArgsConstructor
@@ -33,6 +34,7 @@ public class TextWebSocketFluxClient {
     EmitterProcessor<String> receiveProcessor = EmitterProcessor.create();
     return Flux.<String, Disposable>using(
         () -> connect(send, receiveProcessor.sink())
+            .subscribeOn(Schedulers.parallel())
             .subscribe(),
         connection -> receiveProcessor,
         connection -> {

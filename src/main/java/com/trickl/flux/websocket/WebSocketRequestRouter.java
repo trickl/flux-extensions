@@ -36,6 +36,7 @@ import org.springframework.web.socket.messaging.SessionSubscribeEvent;
 import org.springframework.web.socket.messaging.SessionUnsubscribeEvent;
 
 import reactor.core.publisher.Flux;
+import reactor.core.scheduler.Schedulers;
 
 @Log
 @RequiredArgsConstructor
@@ -91,7 +92,8 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
         .doOnSubscribe(sub -> handleStreamSubscription(stream, sub))
         .doOnCancel(() -> handleStreamCancel(streamId, stream))
         .doOnError(error -> handleStreamError(streamId, stream, error))
-        .doOnComplete(() -> handleStreamComplete(streamId, stream))        
+        .doOnComplete(() -> handleStreamComplete(streamId, stream))
+        .publishOn(Schedulers.parallel())
         .publish()
         .refCount(1, streamDisconnectGracePeriod);
 
@@ -100,6 +102,7 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
         .doOnCancel(() -> handleSubscriberCancel(subscription, stream))
         .doOnError(error -> handleSubscriberError(subscription, stream, error))
         .doOnComplete(() -> handleSubscriberComplete(subscription, stream))
+        .subscribeOn(Schedulers.parallel())
         .subscribe();      
   }
 

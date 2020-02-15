@@ -40,6 +40,7 @@ import reactor.core.publisher.EmitterProcessor;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 @Log
 @RequiredArgsConstructor
@@ -122,7 +123,8 @@ public class StompFluxClient {
           .onErrorContinue(JsonProcessingException.class, this::warnAndDropError)
           .doOnError(this::sendErrorFrame) 
           .doAfterTerminate(this::handleTerminateStream)
-          .retryBackoff(maxRetriesOnError, retryOnErrorFirstBackoff)          
+          .retryBackoff(maxRetriesOnError, retryOnErrorFirstBackoff)
+          .publishOn(Schedulers.parallel())
           .publish()
           .refCount();
 
