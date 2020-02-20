@@ -4,17 +4,15 @@ import java.util.Optional;
 import java.util.PriorityQueue;
 import java.util.function.Function;
 import java.util.function.Predicate;
-
 import lombok.EqualsAndHashCode;
 import lombok.ToString;
 import lombok.Value;
 
-public class ConditionalDelegatingFactory<T, S>  {
+public class ConditionalDelegatingFactory<T, S> {
   private static final int INITIAL_CAPACITY = 4;
-  PriorityQueue<DelegateFunctionWithPriority> delegates = 
-      new PriorityQueue<>(INITIAL_CAPACITY, (a, b) ->
-        Integer.compare(a.getPriority(), b.getPriority())
-      );
+  PriorityQueue<DelegateFunctionWithPriority> delegates =
+      new PriorityQueue<>(
+          INITIAL_CAPACITY, (a, b) -> Integer.compare(a.getPriority(), b.getPriority()));
 
   /**
    * Add a factory to delegate to.
@@ -39,6 +37,7 @@ public class ConditionalDelegatingFactory<T, S>  {
 
   /**
    * Apply the first function whose predicate succeeds the test value.
+   *
    * @param value The value to check against each predicate
    * @return The result of applying the first matching function.
    */

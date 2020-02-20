@@ -3,20 +3,16 @@ package com.trickl.flux.websocket.sockjs;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trickl.flux.mappers.ThrowableMapper;
-import com.trickl.flux.websocket.sockjs.RawSockJsFluxClient;
 import com.trickl.flux.websocket.sockjs.frames.SockJsClose;
 import com.trickl.flux.websocket.sockjs.frames.SockJsFrame;
 import com.trickl.flux.websocket.sockjs.frames.SockJsHeartbeat;
 import com.trickl.flux.websocket.sockjs.frames.SockJsMessage;
 import com.trickl.flux.websocket.sockjs.frames.SockJsOpen;
-
 import java.io.IOException;
 import java.text.MessageFormat;
 import java.util.logging.Level;
-
 import lombok.RequiredArgsConstructor;
 import lombok.extern.java.Log;
-
 import org.reactivestreams.Publisher;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.reactive.socket.CloseStatus;
@@ -61,9 +57,9 @@ public class SockJsFluxClient {
     Publisher<SockJsFrame> sendWithResponse = Flux.merge(send, responseProcessor);
 
     FluxSink<SockJsFrame> responseSink = responseProcessor.sink();
-    return sockJsClient.get(Flux.from(sendWithResponse).flatMap(new ThrowableMapper<>(this::write)))
-        .flatMap(
-            new ThrowableMapper<String, SockJsFrame>(message -> read(message, responseSink)))
+    return sockJsClient
+        .get(Flux.from(sendWithResponse).flatMap(new ThrowableMapper<>(this::write)))
+        .flatMap(new ThrowableMapper<String, SockJsFrame>(message -> read(message, responseSink)))
         .onErrorContinue(JsonProcessingException.class, this::warnAndDropError)
         .publishOn(Schedulers.parallel())
         .publish()
@@ -71,13 +67,14 @@ public class SockJsFluxClient {
   }
 
   protected void warnAndDropError(Throwable ex, Object value) {
-    log.log(Level.WARNING, MessageFormat.format(
-        "Json processing error.\n Message: {0}\nValue: {1}\n", 
-        new Object[] {ex.getMessage(), value}));
+    log.log(
+        Level.WARNING,
+        MessageFormat.format(
+            "Json processing error.\n Message: {0}\nValue: {1}\n",
+            new Object[] {ex.getMessage(), value}));
   }
 
-  protected SockJsFrame read(String message, FluxSink<SockJsFrame> respond)
-      throws IOException {
+  protected SockJsFrame read(String message, FluxSink<SockJsFrame> respond) throws IOException {
 
     // Handle sockJs messages
     if (message.startsWith(SOCK_JS_OPEN)) {
@@ -89,7 +86,7 @@ public class SockJsFluxClient {
       return new SockJsClose(closeStatus);
     }
 
-    return new SockJsMessage(message);        
+    return new SockJsMessage(message);
   }
 
   protected String write(SockJsFrame request) throws JsonProcessingException {

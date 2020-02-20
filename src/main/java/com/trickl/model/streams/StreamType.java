@@ -4,11 +4,11 @@ import com.fasterxml.jackson.annotation.JsonPropertyDescription;
 
 public enum StreamType {
   @JsonPropertyDescription("Broadcast to all listening")
-  TOPIC, 
+  TOPIC,
   @JsonPropertyDescription("Only sent once, possibly to different users")
   QUEUE,
   @JsonPropertyDescription("Broadcast to all subscriptions for a particular user")
   USER,
   @JsonPropertyDescription("Only sent to a particular user subscription")
-  SUBSCRIPTION, 
+  SUBSCRIPTION,
 }

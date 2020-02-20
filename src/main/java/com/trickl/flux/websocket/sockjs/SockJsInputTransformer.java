@@ -7,7 +7,6 @@ import java.util.function.Supplier;
 import java.util.logging.Level;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.java.Log;
-
 import org.apache.el.parser.ParseException;
 import org.reactivestreams.Publisher;
 import org.springframework.web.reactive.socket.CloseStatus;
@@ -33,8 +32,7 @@ public class SockJsInputTransformer implements Function<Publisher<String>, Flux<
   @Override
   public Flux<String> apply(Publisher<String> source) {
     SockJsMessageCodec codec = new Jackson2SockJsMessageCodec(objectMapper);
-    return Flux.from(source)
-        .flatMap(payload -> handleFrame(payload, codec));
+    return Flux.from(source).flatMap(payload -> handleFrame(payload, codec));
   }
 
   protected Publisher<String> handleFrame(String payload, SockJsMessageCodec codec) {
@@ -48,7 +46,7 @@ public class SockJsInputTransformer implements Function<Publisher<String>, Flux<
         return handleMessageFrame(frame, codec);
       case CLOSE:
         return handleCloseFrame(frame, codec);
-      default:        
+      default:
         break;
     }
     return Flux.error(new SockJsException("Bad SockJS Frame", new ParseException(payload)));

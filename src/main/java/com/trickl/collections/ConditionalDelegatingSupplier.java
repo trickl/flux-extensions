@@ -6,17 +6,15 @@ import java.util.PriorityQueue;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
-
 import lombok.EqualsAndHashCode;
 import lombok.ToString;
 import lombok.Value;
 
-public class ConditionalDelegatingSupplier<T, S>  {
+public class ConditionalDelegatingSupplier<T, S> {
   private static final int INITIAL_CAPACITY = 4;
-  PriorityQueue<DelegateSupplierWithPriority> delegates = 
-      new PriorityQueue<>(INITIAL_CAPACITY, (a, b) ->
-        Integer.compare(a.getPriority(), b.getPriority())
-      );
+  PriorityQueue<DelegateSupplierWithPriority> delegates =
+      new PriorityQueue<>(
+          INITIAL_CAPACITY, (a, b) -> Integer.compare(a.getPriority(), b.getPriority()));
 
   /**
    * Add a factory to delegate to.
@@ -41,7 +39,7 @@ public class ConditionalDelegatingSupplier<T, S>  {
 
   /**
    * Apply all suppliers.
-   * 
+   *
    * @return All suppliers
    */
   public List<S> applyAll() {
@@ -52,6 +50,7 @@ public class ConditionalDelegatingSupplier<T, S>  {
 
   /**
    * Apply the first supplier whose predicate succeeds the test value.
+   *
    * @param testValue The value to check against each predicate
    * @return The result of applying the first matching supplier.
    */

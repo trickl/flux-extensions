@@ -1,12 +1,9 @@
 package com.trickl.flux.websocket;
 
 import com.trickl.flux.mappers.ThrowableMapper;
-
 import java.io.IOException;
 import java.io.InputStream;
-
 import lombok.RequiredArgsConstructor;
-
 import org.apache.commons.io.IOUtils;
 import org.reactivestreams.Publisher;
 import org.springframework.core.io.buffer.DataBuffer;
@@ -26,25 +23,21 @@ public class BinaryWebSocketHandler implements WebSocketHandler {
 
   @Override
   public Mono<Void> handle(WebSocketSession session) {
-    Mono<Void> input = session.receive().flatMap(
-        new ThrowableMapper<>(this::handleMessage)).then();
+    Mono<Void> input = session.receive().flatMap(new ThrowableMapper<>(this::handleMessage)).then();
 
     Mono<Void> output =
-        session.send(
-            Flux.from(send)
-                .map(message -> createMessage(session, message)));
+        session.send(Flux.from(send).map(message -> createMessage(session, message)));
 
-    return Mono.zip(input, output)
-        .doOnTerminate(receive::complete)
-        .then(session.close());
+    return Mono.zip(input, output).doOnTerminate(receive::complete).then(session.close());
   }
 
   protected WebSocketMessage createMessage(WebSocketSession session, byte[] message) {
-    return session.binaryMessage(bufferFactory -> {
-      DataBuffer payload = bufferFactory.allocateBuffer(message.length);
-      payload.write(message);
-      return payload;
-    });
+    return session.binaryMessage(
+        bufferFactory -> {
+          DataBuffer payload = bufferFactory.allocateBuffer(message.length);
+          payload.write(message);
+          return payload;
+        });
   }
 
   protected WebSocketMessage handleMessage(WebSocketMessage message) throws IOException {
@@ -53,6 +46,6 @@ public class BinaryWebSocketHandler implements WebSocketHandler {
     InputStream payloadStream = payload.asInputStream();
     byte[] buffer = IOUtils.toByteArray(payloadStream);
     receive.next(buffer);
-    return message;   
+    return message;
   }
 }

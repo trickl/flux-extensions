@@ -18,8 +18,7 @@ public class SockJsOutputTransformer implements Function<Publisher<String>, Flux
   @Override
   public Flux<String> apply(Publisher<String> source) {
     SockJsMessageCodec codec = new Jackson2SockJsMessageCodec(objectMapper);
-    return Flux.from(source)
-        .flatMap(payload -> sendFrame(payload, codec));
+    return Flux.from(source).flatMap(payload -> sendFrame(payload, codec));
   }
 
   protected Publisher<String> sendFrame(String payload, SockJsMessageCodec codec) {

@@ -33,20 +33,21 @@ public class FixedRatePublisher implements Supplier<Flux<Long>> {
   public Flux<Long> get() {
     DirectProcessor<Long> processor = DirectProcessor.create();
     FluxSink<Long> sink = processor.sink();
-    return processor
-        .doOnSubscribe(sub -> onSubscribe(sink))        
-        .doOnCancel(() -> onCancel(sink));    
+    return processor.doOnSubscribe(sub -> onSubscribe(sink)).doOnCancel(() -> onCancel(sink));
   }
 
-  private void onSubscribe(FluxSink<Long> sink) {    
-    try {      
+  private void onSubscribe(FluxSink<Long> sink) {
+    try {
       AtomicLong count = new AtomicLong();
-      Disposable emitterTask = scheduler.schedulePeriodically(
-          () -> sink.next(count.getAndIncrement()),
-          delay.toMillis(), period.toMillis(), TimeUnit.MILLISECONDS);
+      Disposable emitterTask =
+          scheduler.schedulePeriodically(
+              () -> sink.next(count.getAndIncrement()),
+              delay.toMillis(),
+              period.toMillis(),
+              TimeUnit.MILLISECONDS);
       sink.onCancel(emitterTask::dispose);
     } catch (RejectedExecutionException ree) {
-      sink.error(ree);      
+      sink.error(ree);
     }
   }
 

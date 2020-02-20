@@ -4,7 +4,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
-
 import reactor.core.publisher.Flux;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
@@ -28,7 +27,6 @@ public class FixedRateTimePublisher implements Supplier<Flux<Instant>> {
 
   @Override
   public Flux<Instant> get() {
-    return new FixedRatePublisher(delay, period, scheduler).get()
-            .map(val -> timeSupplier.get());
+    return new FixedRatePublisher(delay, period, scheduler).get().map(val -> timeSupplier.get());
   }
 }

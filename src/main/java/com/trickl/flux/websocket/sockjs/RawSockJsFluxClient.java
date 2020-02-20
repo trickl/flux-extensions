@@ -2,7 +2,6 @@ package com.trickl.flux.websocket.sockjs;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trickl.flux.websocket.TextWebSocketFluxClient;
-
 import java.util.function.Function;
 import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
@@ -35,16 +34,15 @@ public class RawSockJsFluxClient {
     SockJsInputTransformer sockJsInputTransformer =
         new SockJsInputTransformer(
             objectMapper, openMessageSupplier, hearbeatMessageSupplier, closeMessageFunction);
-    SockJsOutputTransformer sockJsOutputTransformer =
-        new SockJsOutputTransformer(objectMapper);
+    SockJsOutputTransformer sockJsOutputTransformer = new SockJsOutputTransformer(objectMapper);
 
     TextWebSocketFluxClient webSocketFluxClient =
         new TextWebSocketFluxClient(
             webSocketClient,
             sockJsUrlInfo.getTransportUrl(TransportType.WEBSOCKET),
             webSocketHeadersProvider);
-            
-    return sockJsInputTransformer.apply(webSocketFluxClient.get(
-      sockJsOutputTransformer.apply(Flux.from(send))));
+
+    return sockJsInputTransformer.apply(
+        webSocketFluxClient.get(sockJsOutputTransformer.apply(Flux.from(send))));
   }
 }
