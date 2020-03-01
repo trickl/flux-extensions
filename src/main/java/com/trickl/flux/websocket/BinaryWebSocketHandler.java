@@ -3,7 +3,9 @@ package com.trickl.flux.websocket;
 import com.trickl.flux.mappers.ThrowableMapper;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.logging.Level;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.java.Log;
 import org.apache.commons.io.IOUtils;
 import org.reactivestreams.Publisher;
 import org.springframework.core.io.buffer.DataBuffer;
@@ -14,6 +16,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
 
+@Log
 @RequiredArgsConstructor
 public class BinaryWebSocketHandler implements WebSocketHandler {
 
@@ -26,9 +29,13 @@ public class BinaryWebSocketHandler implements WebSocketHandler {
     Mono<Void> input = session.receive().flatMap(new ThrowableMapper<>(this::handleMessage)).then();
 
     Mono<Void> output =
-        session.send(Flux.from(send).map(message -> createMessage(session, message)));
-
-    return Mono.zip(input, output).doOnTerminate(receive::complete).then(session.close());
+        session.send(Flux.from(send).log("send").map(message -> createMessage(session, message)));
+    
+    return Mono.usingWhen(Mono.just(session), sessionResource -> {
+      return Mono.zip(input, output).then();
+    }, sessionResource -> session.close().doOnSuccess(element -> {
+      log.log(Level.INFO, "Closed session.");
+    }));
   }
 
   protected WebSocketMessage createMessage(WebSocketSession session, byte[] message) {

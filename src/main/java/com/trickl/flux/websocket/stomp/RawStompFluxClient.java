@@ -3,24 +3,43 @@ package com.trickl.flux.websocket.stomp;
 import com.trickl.flux.websocket.BinaryWebSocketFluxClient;
 import com.trickl.flux.websocket.stomp.frames.StompConnectFrame;
 import com.trickl.flux.websocket.stomp.frames.StompDisconnectFrame;
+import java.io.IOException;
 import java.net.URI;
 import java.time.Duration;
-import lombok.RequiredArgsConstructor;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
+import java.util.logging.Level;
+import lombok.Builder;
+import lombok.extern.java.Log;
 import org.reactivestreams.Publisher;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.reactive.socket.client.WebSocketClient;
 import reactor.core.publisher.EmitterProcessor;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
-import reactor.core.publisher.Mono;
 
-@RequiredArgsConstructor
+@Log
+@Builder
 public class RawStompFluxClient {
   private final WebSocketClient webSocketClient;
-  private final URI transportUri;
-  private final Mono<HttpHeaders> webSocketHeadersProvider;
-  private final Duration heartbeatSendFrequency;
-  private final Duration heartbeatReceiveFrequency;
+  private final Supplier<URI> transportUriProvider;
+  @Builder.Default private Supplier<HttpHeaders> webSocketHeadersProvider = HttpHeaders::new;
+  @Builder.Default private Duration heartbeatSendFrequency = Duration.ofSeconds(5);
+  @Builder.Default private Duration heartbeatReceiveFrequency = Duration.ofSeconds(5);
+  @Builder.Default private Duration disconnectReceiptTimeout = Duration.ofMillis(500);
+
+  @Builder.Default
+  private Runnable beforeConnect =
+      () -> {
+        /* Noop */
+      };
+
+  @Builder.Default
+  private Runnable afterDisconnect =
+      () -> {
+        /* Noop */
+      };
 
   /**
    * Connect to a stomp service.
@@ -32,34 +51,61 @@ public class RawStompFluxClient {
     StompInputTransformer stompInputTransformer = new StompInputTransformer();
     StompOutputTransformer stompOutputTransformer = new StompOutputTransformer();
 
-    EmitterProcessor<StompFrame> frameProcessor = EmitterProcessor.create();
-    FluxSink<StompFrame> frameSink = frameProcessor.sink();
-    Flux<StompFrame> output = Flux.merge(frameProcessor, send);
-
     BinaryWebSocketFluxClient webSocketFluxClient =
-        new BinaryWebSocketFluxClient(
-            webSocketClient,
-            transportUri,
-            webSocketHeadersProvider,
-            () -> onConnect(frameSink),
-            () -> onDisconnect(frameSink));
-    return stompInputTransformer.apply(
-        webSocketFluxClient.get(stompOutputTransformer.apply(output)));
+        BinaryWebSocketFluxClient.builder()
+            .webSocketClient(webSocketClient)
+            .transportUriProvider(transportUriProvider)
+            .webSocketHeadersProvider(webSocketHeadersProvider)
+            .beforeConnect(beforeConnect)
+            .afterConnect(this::afterConnect)
+            .beforeDisconnect(this::beforeDisconnect)
+            .afterDisconnect(afterDisconnect)
+            .build();
+    return stompInputTransformer
+        .apply(
+            webSocketFluxClient.get(
+                stompOutputTransformer.apply(
+                    Flux.defer(
+                        () -> {
+                          EmitterProcessor<StompFrame> frameProcessor = EmitterProcessor.create();
+                          return Flux.merge(frameProcessor, send);
+                        }))))
+        .log("Raw Stomp Flux Client");
   }
 
-  protected void onConnect(FluxSink<StompFrame> frameSink) {
+  protected void afterConnect(FluxSink<byte[]> sendSink) {
+    log.info("Sending connect frame after connection");
+    StompMessageCodec codec = new StompMessageCodec();
     StompConnectFrame connectFrame =
         StompConnectFrame.builder()
             .acceptVersion("1.0,1.1,1.2")
             .heartbeatSendFrequency(heartbeatSendFrequency)
             .heartbeatReceiveFrequency(heartbeatReceiveFrequency)
-            .host(transportUri.getHost())
+            .host(transportUriProvider.get().getHost())
             .build();
-    frameSink.next(connectFrame);
+    try {
+      byte[] encoded = codec.encode(connectFrame);
+      sendSink.next(encoded);
+    } catch (IOException ex) {
+      log.log(Level.WARNING, "Bad connection frame encoding", ex);
+    }
   }
 
-  protected void onDisconnect(FluxSink<StompFrame> frameSink) {
+  protected void beforeDisconnect(FluxSink<byte[]> sendSink) {
+    CountDownLatch countDownLatch = new CountDownLatch(1);
+    StompMessageCodec codec = new StompMessageCodec();
     StompDisconnectFrame disconnectFrame = StompDisconnectFrame.builder().build();
-    frameSink.next(disconnectFrame);
+    try {
+      byte[] encodedFrame = codec.encode(disconnectFrame);
+      sendSink.next(encodedFrame);
+      if (countDownLatch.await(disconnectReceiptTimeout.toMillis(), TimeUnit.MILLISECONDS)) {
+        log.info("No receipt for disconnect in time, closing socket anyway");
+      }
+    } catch (InterruptedException ex) {
+      log.info("Interruped wait on disconnect receipt");
+      Thread.currentThread().interrupt();
+    } catch (IOException ex) {
+      log.log(Level.WARNING, "Bad disconnection frame encoding", ex);
+    }
   }
 }

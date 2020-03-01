@@ -1,35 +1,5 @@
-server:
-   id: price
-   port: 8087
-   secret: pricesecret
-auth:
-   check_token:
-      url: localhost:8083/oauth/check_token
-storage:
-   influx-db:
-     url: http://localhost:8086
-spring:
-  data:
-    rest:
-      base-path: /api
-  jackson:
-    serialization:
-      indent_output: true
-management:
-  context-path: /manage
-  security:
-    enabled: false
 logging:
+  path: logs
   level:
     org.springframework.security: DEBUG
-    com.trickl.price.datasource: DEBUG
-clock:
-#  start: 2017-03-02T12:30:00.00Z
-#  speed: 20
-  start: now
-oanda:
-  apiToken: ${OANDA_API_TOKEN:api_token_unset}
-  accountId: ${OANDA_ACCOUNT_ID:account_id_unset}
-smarkets:
-  password: ${SMARKETS_PASSWORD:password_unset}
-  username: ${SMARKETS_USERNAME:account_id_unset}
+    com.trickl.flux: DEBUG

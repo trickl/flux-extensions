@@ -12,7 +12,7 @@
   <parent>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-parent</artifactId>
-    <version>2.1.7.RELEASE</version>
+    <version>2.2.4.RELEASE</version>
   </parent>
   <developers>
     <developer>
@@ -39,6 +39,7 @@
   </scm>
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <okhttp3.version>4.4.0</okhttp3.version>
   </properties>
   <dependencies>
     <dependency>
@@ -69,23 +70,39 @@
        <version>2.6</version>
     </dependency>
     <dependency>
+      <groupId>com.github.trickl</groupId>
+      <artifactId>flux-mock-websocket</artifactId>
+      <version>0.0.1-SNAPSHOT</version>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
       <groupId>io.projectreactor</groupId>	
       <artifactId>reactor-test</artifactId>
       <version>3.2.2.RELEASE</version>
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>junit</groupId>
-      <artifactId>junit</artifactId>
-      <version>4.12</version>
-      <scope>test</scope>
+        <groupId>org.junit.jupiter</groupId>
+        <artifactId>junit-jupiter</artifactId>
+        <version>5.4.0</version>
+        <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.mockito</groupId>
       <artifactId>mockito-core</artifactId>
-      <version>2.15.0</version>
+      <version>2.24.0</version>
       <scope>test</scope>
       <type>jar</type>
+    </dependency>
+    <dependency>
+      <groupId>org.mockito</groupId>
+      <artifactId>mockito-junit-jupiter</artifactId>
+      <version>2.24.0</version>
+      <scope>test</scope>
     </dependency>
   </dependencies>
   <build>
@@ -140,12 +157,12 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-checkstyle-plugin</artifactId>
-        <version>2.17</version>
+        <version>3.1.1</version>
         <dependencies>
           <dependency>
             <groupId>com.puppycrawl.tools</groupId>
             <artifactId>checkstyle</artifactId>
-            <version>8.18</version>
+            <version>8.29</version>
           </dependency>
         </dependencies>
         <executions>
