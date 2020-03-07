@@ -9,6 +9,7 @@ import java.time.Duration;
 import java.util.regex.Pattern;
 
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.reactivestreams.Subscription;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,8 +32,13 @@ public class StompFluxClientTest {
   private Subscription subscription;
 
   private static final Pattern STOMP_CONNECT_PATTERN = Pattern.compile("CONNECT.*", Pattern.DOTALL);
+  private static final Pattern STOMP_HEARTBEAT_PATTERN = Pattern.compile("\\s*", Pattern.DOTALL);
+  private static final Pattern STOMP_SUBSCRIBE_PATTERN = 
+      Pattern.compile("SUBSCRIBE.*", Pattern.DOTALL);
   private static final Pattern STOMP_DISCONNECT_PATTERN 
       = Pattern.compile("DISCONNECT.*", Pattern.DOTALL);
+  private static final String STOMP_CONNECTED_MESSAGE = 
+      "CONNECTED\nversion:1.2\nheart-beat:3000,3000\n\n\u0000";
 
   @BeforeEach
   private void setup() {      
@@ -47,7 +53,8 @@ public class StompFluxClientTest {
   }
 
   @Test
-  public void testConnectionRetry() {
+  @Disabled
+  public void testNoConnectionRetry() {
 
     MockServerWithWebSocket mockServer = new MockServerWithWebSocket();
 
@@ -77,6 +84,68 @@ public class StompFluxClientTest {
         .webSocketClient(client)
         .transportUriProvider(mockServer::getWebSocketUri)
         .connectionTimeout(Duration.ofSeconds(1))
+        .beforeConnect(mockServer::start)
+        .afterDisconnect(() -> {
+          try {
+            mockServer.shutdown();
+          } catch (IOException ex) {
+            throw new IllegalStateException("Unable to shutdown server", ex);
+          }
+        })
+        .build();
+
+    Flux<String> output = stompClient.subscribe(
+        "/messages", String.class, Duration.ofMinutes(30));
+
+    StepVerifier.create(output)
+        .consumeSubscriptionWith(sub -> subscription = sub)
+        .expectError()
+        //.then(this::unsubscribe)
+        //.expectComplete()
+        .verify();
+  }
+
+  @Test
+  public void testNoHeartbeatRetry() {
+
+    MockServerWithWebSocket mockServer = new MockServerWithWebSocket();
+
+    mockServer.beginVerifier()
+        .thenWaitServerStartThenUpgrade()
+        .thenExpectOpen()
+        .thenExpectMessage(STOMP_CONNECT_PATTERN)
+        .thenSend(STOMP_CONNECTED_MESSAGE)
+        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
+        .thenExpectMessage(STOMP_SUBSCRIBE_PATTERN)
+        .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
+        .thenExpectClose()
+        .thenWaitServerShutdown()
+        .thenWaitServerStartThenUpgrade()
+        .thenExpectOpen()        
+        .thenExpectMessage(STOMP_CONNECT_PATTERN)
+        .thenSend(STOMP_CONNECTED_MESSAGE)
+        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
+        .thenExpectMessage(STOMP_SUBSCRIBE_PATTERN)
+        .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
+        .thenExpectClose()
+        .thenWaitServerShutdown()
+        .thenWaitServerStartThenUpgrade()    
+        .thenExpectOpen()        
+        .thenExpectMessage(STOMP_CONNECT_PATTERN)
+        .thenSend(STOMP_CONNECTED_MESSAGE)
+        .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
+        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
+        .thenExpectMessage(STOMP_SUBSCRIBE_PATTERN)
+        .thenExpectClose()
+        .thenVerify(); 
+
+    WebSocketClient client = new ReactorNettyWebSocketClient();
+    StompFluxClient stompClient =
+        StompFluxClient.builder()
+        .webSocketClient(client)
+        .transportUriProvider(mockServer::getWebSocketUri)
+        .connectionTimeout(Duration.ofSeconds(15))
+        .heartbeatReceiveFrequency(Duration.ofSeconds(3))
         .beforeConnect(mockServer::start)
         .afterDisconnect(() -> {
           try {

@@ -82,7 +82,7 @@ public class BinaryWebSocketFluxClient {
         subscriber.onComplete();
       }).doFinally(signal -> {
         afterDisconnect.run();
-      }).log("Binary Web Socket Client");
+      });
   }
 
   protected SessionSubscriber subscribeConnection(

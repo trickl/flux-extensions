@@ -33,7 +33,6 @@ import lombok.Builder;
 import lombok.extern.java.Log;
 import org.reactivestreams.Publisher;
 import org.springframework.http.HttpHeaders;
-import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.web.reactive.socket.client.WebSocketClient;
 import reactor.core.publisher.EmitterProcessor;
 import reactor.core.publisher.Flux;
@@ -70,18 +69,20 @@ public class StompFluxClient {
 
   private final Map<String, String> subscriptionDestinationIdMap = new HashMap<>();
 
-  private final EmitterProcessor<Flux<StompMessageFrame>> streamEmitter = 
+  private final EmitterProcessor<Flux<StompFrame>> streamEmitter = 
       EmitterProcessor.create();
 
-  private final Publisher<Flux<StompMessageFrame>> streamPublisher = 
+  private final Publisher<Flux<StompFrame>> streamPublisher = 
       streamEmitter.cache(1);
 
-  private final FluxSink<Flux<StompMessageFrame>> streamSink = streamEmitter.sink();
+  private final FluxSink<Flux<StompFrame>> streamSink = streamEmitter.sink();
 
   private final AtomicBoolean isConnected = new AtomicBoolean(false);
 
   private final AtomicBoolean isConnecting = new AtomicBoolean(false);
 
+  private static final double HEARTBEAT_PERCENTAGE_TOLERANCE = 2;
+  
   /** Connect to the stomp transport. */
   public void connect() {
     if (isConnected.get() || !isConnecting.compareAndSet(false, true)) {
@@ -104,29 +105,25 @@ public class StompFluxClient {
         .switchIfEmpty(Flux.defer(this::buildSendWithResponse))
         .log("Send with response");
 
-    Flux<StompMessageFrame> stream =
-        Flux.<StompMessageFrame, ConnectionContext>using(
+    Flux<StompFrame> stream =
+        Flux.<StompFrame, ConnectionContext>using(
             () -> createConnectionContext(connectionTimeout),
           context -> stompFluxClient        
           .get(sendWithResponse)   
           .doOnNext(
               frame -> {
-                log.info("Got frame " + frame.getClass());
                 if (StompConnectedFrame.class.equals(frame.getClass())) {
                   handleConnectStream(context, (StompConnectedFrame) frame);
                 }
               })
           .flatMap(new ThrowableMapper<StompFrame, StompFrame>(this::handleErrorFrame))
           .mergeWith(Flux.defer(() -> createConnectionExpectation(context)))
-          .mergeWith(Flux.defer(() -> createHeartbeatExpectation(context)))
-          .filter(frame -> frame.getHeaderAccessor().getCommand().equals(StompCommand.MESSAGE))
-          .cast(StompMessageFrame.class)
+          .mergeWith(Flux.defer(() -> createHeartbeatExpectation(context)))          
           .onErrorContinue(JsonProcessingException.class, this::warnAndDropError)
           .doOnError(this::sendErrorFrame)
           .doAfterTerminate(this::handleTerminateStream),        
           this::closeConnectionContext)
         .retryWhen(this::retryWhenFactory)
-        .log("Shared stream")
         .publish()
         .refCount();
         
@@ -141,14 +138,14 @@ public class StompFluxClient {
     context.close();
   }
 
-  protected Publisher<StompMessageFrame> createConnectionExpectation(
+  protected Publisher<StompFrame> createConnectionExpectation(
       ConnectionContext context) {
     log.info("Creating connection expectation.");
     return Flux.from(context.getConnectionExpectationPublisher())
         .switchMap(this::timeoutNoConnection);
   }
 
-  protected Publisher<StompMessageFrame> createHeartbeatExpectation(
+  protected Publisher<StompFrame> createHeartbeatExpectation(
       ConnectionContext context) {
     return Flux.from(context.getHeartbeatExpectationPublisher())
         .switchMap(this::timeoutNoHeartbeat);    
@@ -160,7 +157,14 @@ public class StompFluxClient {
   }
 
   protected void handleConnectStream(ConnectionContext context, StompConnectedFrame frame) {
-    expectHeartbeatsEvery(context, frame.getHeartbeatSendFrequency());
+    if (!frame.getHeartbeatSendFrequency().isZero()) {
+      Duration heartbeatExpectation = 
+          frame.getHeartbeatSendFrequency().plus(
+              frame.getHeartbeatSendFrequency()
+              .multipliedBy((long) (HEARTBEAT_PERCENTAGE_TOLERANCE * 100))
+              .dividedBy(100));
+      expectHeartbeatsEvery(context, heartbeatExpectation);
+    }
     sendHeartbeatsEvery(frame.getHeartbeatReceiveFrequency());
     expectConnectionWithin(context, Duration.ZERO);
     isConnecting.set(false);
@@ -176,7 +180,7 @@ public class StompFluxClient {
   }
 
   protected void sendErrorFrame(Throwable error) {
-    StompFrame frame = StompErrorFrame.builder().message(error.getLocalizedMessage()).build();
+    StompFrame frame = StompErrorFrame.builder().message(error.toString()).build();
     streamRequestSink.next(frame);
   }
 
@@ -199,7 +203,7 @@ public class StompFluxClient {
     return Flux.merge(streamRequestProcessor, heartbeats, responseProcessor);
   }
 
-  protected Publisher<StompMessageFrame> timeoutNoHeartbeat(Duration frequency) {
+  protected Publisher<StompFrame> timeoutNoHeartbeat(Duration frequency) {
     return Flux.from(streamPublisher).switchMap(stream -> {
       if (frequency.isZero()) {
         log.info("Cancelling heartbeat expectation");
@@ -222,7 +226,7 @@ public class StompFluxClient {
     });
   }
 
-  protected Publisher<StompMessageFrame> timeoutNoConnection(Duration period) {    
+  protected Publisher<StompFrame> timeoutNoConnection(Duration period) {    
     return Flux.from(streamPublisher).switchMap(stream -> {
       if (period.isZero()) {
         log.info("Cancelling timeout expectation " + period);
@@ -330,6 +334,8 @@ public class StompFluxClient {
     Flux<StompMessageFrame> messageFrameFlux =
         Flux.from(streamPublisher).switchMap(stream ->
             stream
+            .filter(frame -> frame instanceof StompMessageFrame)
+            .cast(StompMessageFrame.class)
             .filter(frame -> frame.getDestination().equals(destination))
             .timeout(minMessageFrequency)
             .onErrorMap(

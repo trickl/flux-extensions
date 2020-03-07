@@ -26,7 +26,8 @@ public class BinaryWebSocketHandler implements WebSocketHandler {
 
   @Override
   public Mono<Void> handle(WebSocketSession session) {
-    Mono<Void> input = session.receive().flatMap(new ThrowableMapper<>(this::handleMessage)).then();
+    Mono<Void> input = session.receive()
+        .log("receive").flatMap(new ThrowableMapper<>(this::handleMessage)).then();
 
     Mono<Void> output =
         session.send(Flux.from(send).log("send").map(message -> createMessage(session, message)));
@@ -48,6 +49,7 @@ public class BinaryWebSocketHandler implements WebSocketHandler {
   }
 
   protected WebSocketMessage handleMessage(WebSocketMessage message) throws IOException {
+    log.info("Handling message...");
     message.retain();
     DataBuffer payload = message.getPayload();
     InputStream payloadStream = payload.asInputStream();

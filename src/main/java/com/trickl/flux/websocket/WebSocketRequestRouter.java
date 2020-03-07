@@ -125,7 +125,7 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
 
   protected void handleStreamError(StreamId streamId, StreamDetails stream, Throwable error) {
     stream.setErrorTime(Instant.now());
-    stream.setErrorMessage(error.getLocalizedMessage());
+    stream.setErrorMessage(error.toString());
     setStreamTerminated(streamId, stream.getDestination());
   }
 
@@ -164,7 +164,7 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
   protected void handleSubscriberError(
       SubscriptionDetails subscription, StreamDetails stream, Throwable error) {
     subscription.setErrorTime(Instant.now());
-    subscription.setErrorMessage(error.getLocalizedMessage());
+    subscription.setErrorMessage(error.toString());
   }
 
   protected void handleSubscriberComplete(SubscriptionDetails subscription, StreamDetails stream) {
