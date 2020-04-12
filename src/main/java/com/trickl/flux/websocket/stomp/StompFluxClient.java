@@ -103,7 +103,7 @@ public class StompFluxClient {
 
     Publisher<StompFrame> sendWithResponse = buildSendWithResponse()
         .switchIfEmpty(Flux.defer(this::buildSendWithResponse))
-        .log("Send with response");
+        .log("Send with response", Level.FINER);
 
     Flux<StompFrame> stream =
         Flux.<StompFrame, ConnectionContext>using(

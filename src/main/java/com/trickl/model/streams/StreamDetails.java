@@ -21,6 +21,7 @@ public class StreamDetails {
 
   protected int subscriberCount;
   protected int messageCount;
+  protected Instant connectionTime;
   protected Instant subscriptionTime;
   protected Instant lastMessageTime;
   protected Instant cancelTime;

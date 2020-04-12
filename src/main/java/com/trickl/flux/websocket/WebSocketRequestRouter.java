@@ -1,5 +1,6 @@
 package com.trickl.flux.websocket;
 
+import com.trickl.exceptions.ConnectionFailedException;
 import com.trickl.exceptions.SubscriptionFailedException;
 import com.trickl.flux.consumers.SimpMessageSender;
 import com.trickl.model.streams.StreamDetails;
@@ -28,6 +29,7 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.messaging.support.MessageHeaderAccessor;
 import org.springframework.util.Assert;
 import org.springframework.web.socket.messaging.AbstractSubProtocolEvent;
+import org.springframework.web.socket.messaging.SessionConnectEvent;
 import org.springframework.web.socket.messaging.SessionDisconnectEvent;
 import org.springframework.web.socket.messaging.SessionSubscribeEvent;
 import org.springframework.web.socket.messaging.SessionUnsubscribeEvent;
@@ -71,25 +73,36 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
 
   protected void subscribe(SubscriptionDetails subscription) throws SubscriptionFailedException {
     String destination = subscription.getDestination();
-    StreamId streamId =
-        streamIdParser
-            .apply(destination)
-            .orElseThrow(
-                () ->
-                    new SubscriptionFailedException(
-                        MessageFormat.format("Destination: {0} not found.", destination)));
-    StreamDetails stream = StreamDetails.builder().destination(destination).build();
+    streamIdParser
+        .apply(destination)
+        .orElseThrow(
+            () ->
+                new SubscriptionFailedException(
+                    MessageFormat.format("Destination: {0} invalid.", destination)));
+    handleSubscription(subscription);
+  }
 
-    SimpMessageSender<T> messageSender = new SimpMessageSender<>(messagingTemplate, destination);
+  protected void connect(SubscriptionDetails subscription) throws ConnectionFailedException {
+    String destination = subscription.getDestination();
+    SimpMessageSender<T> messageSender = new SimpMessageSender<>(messagingTemplate,
+        subscription.getDestination());
+    StreamDetails stream = StreamDetails.builder().destination(destination).build();
+    StreamId streamId = streamIdParser
+        .apply(destination)
+        .orElseThrow(
+            () ->
+                new ConnectionFailedException(
+                    MessageFormat.format("Destination: {0} not found.", 
+                    destination)));
     Flux<?> connectableFlux =
         this.fluxes
             .computeIfAbsent(streamId, fluxFactory::apply)
             .orElseThrow(
                 () ->
-                    new SubscriptionFailedException(
+                    new ConnectionFailedException(
                         MessageFormat.format("Destination: {0} not found.", destination)))
             .doOnNext(value -> handleStreamValue(stream, messageSender, value))
-            .doOnSubscribe(sub -> handleStreamSubscription(stream, sub))
+            .doOnSubscribe(sub -> handleStreamSubscription(stream))
             .doOnCancel(() -> handleStreamCancel(streamId, stream))
             .doOnError(error -> handleStreamError(streamId, stream, error))
             .doOnComplete(() -> handleStreamComplete(streamId, stream))
@@ -98,7 +111,7 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
             .refCount(1, streamDisconnectGracePeriod);
 
     connectableFlux
-        .doOnSubscribe(sub -> handleSubscription(subscription, stream, sub))
+        .doOnSubscribe(sub -> handleConnection(subscription, stream, sub))
         .doOnCancel(() -> handleSubscriberCancel(subscription, stream))
         .doOnError(error -> handleSubscriberError(subscription, stream, error))
         .doOnComplete(() -> handleSubscriberComplete(subscription, stream))
@@ -106,7 +119,7 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
         .subscribe();
   }
 
-  protected void handleStreamSubscription(StreamDetails stream, Subscription subscription) {
+  protected void handleStreamSubscription(StreamDetails stream) {
     stream.setSubscriptionTime(Instant.now());
     streams.put(stream.getDestination(), stream);
   }
@@ -148,12 +161,16 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
         });
   }
 
-  protected void handleSubscription(
-      SubscriptionDetails detail, StreamDetails stream, Subscription subscription) {
+  protected void handleSubscription(SubscriptionDetails detail) {
     detail.setSubscriptionTime(Instant.now());
-    stream.setSubscriberCount(stream.getSubscriberCount() + 1);
-    subscriptions.put(detail.getId(), subscription);
     subscriptionDetails.put(detail.getId(), detail);
+  }
+
+  protected void handleConnection(SubscriptionDetails subscription,
+      StreamDetails stream, Subscription sub) {
+    stream.setSubscriberCount(stream.getSubscriberCount() + 1);
+    subscriptions.put(subscription.getId(), sub);
+    subscription.setConnectionTime(Instant.now());
   }
 
   protected void handleSubscriberCancel(SubscriptionDetails subscription, StreamDetails stream) {
@@ -210,7 +227,7 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
     if (event instanceof SessionSubscribeEvent) {
       String destination = accessor.getDestination();
       Assert.state(destination != null, "No destination");
-
+      
       try {
         SubscriptionDetails subscriptionInfo =
             SubscriptionDetails.builder()
@@ -221,7 +238,18 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
                 .build();
         subscribe(subscriptionInfo);
       } catch (SubscriptionFailedException ex) {
-        log.log(Level.WARNING, "Subscription failed", ex);
+        log.log(Level.WARNING, "Connect failed", ex);
+      }
+    } else if (event instanceof SessionConnectEvent) {
+      String subscriptionId = accessor.getSubscriptionId();
+      Assert.state(subscriptionId != null, "No subscriptionId");
+      
+      try {
+        if (subscriptionDetails.containsKey(subscriptionId)) {
+          connect(subscriptionDetails.get(subscriptionId));
+        }
+      } catch (ConnectionFailedException ex) {
+        log.log(Level.WARNING, "Connect failed", ex);
       }
     } else if (event instanceof SessionDisconnectEvent) {
       // TODO: Not very efficient

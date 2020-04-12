@@ -25,6 +25,7 @@ public class SubscriptionDetails {
 
   protected String userName;
   protected Instant subscriptionTime;
+  protected Instant connectionTime;
   protected Instant cancelTime;
   protected Instant completeTime;
   protected Instant errorTime;

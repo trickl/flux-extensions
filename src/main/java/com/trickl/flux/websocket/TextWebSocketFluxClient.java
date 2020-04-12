@@ -44,7 +44,7 @@ public class TextWebSocketFluxClient {
     TextWebSocketHandler handler = new TextWebSocketHandler(receive, Flux.from(send));
 
     return webSocketHeadersProvider
-        .flatMap(headers -> webSocketClient.execute(transportUrl, headers, handler).log("client"))
+        .flatMap(headers -> webSocketClient.execute(transportUrl, headers, handler))
         .doOnError(receive::error);
   }
 }

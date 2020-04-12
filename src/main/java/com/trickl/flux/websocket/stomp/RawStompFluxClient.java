@@ -70,7 +70,7 @@ public class RawStompFluxClient {
                           EmitterProcessor<StompFrame> frameProcessor = EmitterProcessor.create();
                           return Flux.merge(frameProcessor, send);
                         }))))
-        .log("Raw Stomp Flux Client");
+        .log("Raw Stomp Flux Client", Level.FINER);
   }
 
   protected void afterConnect(FluxSink<byte[]> sendSink) {

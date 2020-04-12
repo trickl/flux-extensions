@@ -27,10 +27,13 @@ public class BinaryWebSocketHandler implements WebSocketHandler {
   @Override
   public Mono<Void> handle(WebSocketSession session) {
     Mono<Void> input = session.receive()
-        .log("receive").flatMap(new ThrowableMapper<>(this::handleMessage)).then();
+        .log("receive", Level.FINER)
+        .flatMap(new ThrowableMapper<>(this::handleMessage)).then();
 
     Mono<Void> output =
-        session.send(Flux.from(send).log("send").map(message -> createMessage(session, message)));
+        session.send(Flux.from(send)
+           .log("send", Level.FINER)
+           .map(message -> createMessage(session, message)));
     
     return Mono.usingWhen(Mono.just(session), sessionResource -> {
       return Mono.zip(input, output).then();
