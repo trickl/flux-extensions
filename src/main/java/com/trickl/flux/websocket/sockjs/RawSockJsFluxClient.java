@@ -5,6 +5,7 @@ import com.trickl.flux.websocket.TextWebSocketFluxClient;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.java.Log;
 import org.reactivestreams.Publisher;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.reactive.socket.CloseStatus;
@@ -14,6 +15,7 @@ import org.springframework.web.socket.sockjs.transport.TransportType;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+@Log
 @RequiredArgsConstructor
 public class RawSockJsFluxClient {
   private final WebSocketClient webSocketClient;
@@ -43,6 +45,8 @@ public class RawSockJsFluxClient {
             webSocketHeadersProvider);
 
     return sockJsInputTransformer.apply(
-        webSocketFluxClient.get(sockJsOutputTransformer.apply(Flux.from(send))));
+        webSocketFluxClient.get(sockJsOutputTransformer.apply(Flux.from(send))))
+        .doOnTerminate(() -> log.info("RawSockJsFluxClient terminated."))
+        .doOnCancel(() -> log.info("RawSockJsFluxClient cancel."));
   }
 }

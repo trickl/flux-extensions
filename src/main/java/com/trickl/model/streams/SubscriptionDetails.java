@@ -17,18 +17,19 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class SubscriptionDetails {
+  @NotNull protected String sessionId;
   @NotNull protected String id;
-
   @NotNull protected String destination;
 
-  @NotNull protected String sessionId;
-
-  protected String userName;
-  protected Instant subscriptionTime;
+  protected int subscriberCount;
+  protected int messageCount;
   protected Instant connectionTime;
+  protected Instant subscriptionTime;
+  protected Instant lastMessageTime;
   protected Instant cancelTime;
   protected Instant completeTime;
+  protected Instant unsubscribeTime;
   protected Instant errorTime;
   protected String errorMessage;
-  protected Boolean isCancelled;
+  protected boolean isTerminated;
 }

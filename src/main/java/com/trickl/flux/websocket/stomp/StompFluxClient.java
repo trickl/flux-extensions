@@ -7,6 +7,7 @@ import com.trickl.exceptions.MissingHeartbeatException;
 import com.trickl.exceptions.NoDataException;
 import com.trickl.exceptions.RemoteStreamException;
 import com.trickl.flux.mappers.ThrowableMapper;
+import com.trickl.flux.retry.ExponentialBackoffRetry;
 import com.trickl.flux.websocket.stomp.frames.StompConnectedFrame;
 import com.trickl.flux.websocket.stomp.frames.StompErrorFrame;
 import com.trickl.flux.websocket.stomp.frames.StompHeartbeatFrame;
@@ -18,17 +19,13 @@ import java.io.IOException;
 import java.net.URI;
 import java.text.MessageFormat;
 import java.time.Duration;
-import java.util.Collections;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import java.util.logging.Level;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import lombok.Builder;
 import lombok.extern.java.Log;
 import org.reactivestreams.Publisher;
@@ -37,7 +34,6 @@ import org.springframework.web.reactive.socket.client.WebSocketClient;
 import reactor.core.publisher.EmitterProcessor;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
-import reactor.core.publisher.Mono;
 
 @Log
 @Builder
@@ -123,7 +119,7 @@ public class StompFluxClient {
           .doOnError(this::sendErrorFrame)
           .doAfterTerminate(this::handleTerminateStream),        
           this::closeConnectionContext)
-        .retryWhen(this::retryWhenFactory)
+        .retryWhen(new ExponentialBackoffRetry(Duration.ofSeconds(1), 3))
         .publish()
         .refCount();
         
@@ -270,35 +266,6 @@ public class StompFluxClient {
             new Object[] {ex.getMessage(), value}));
   }
 
-  protected Flux<Long> retryWhenFactory(Flux<Throwable> errorFlux) {
-    Duration initialRetryDelay = Duration.ofSeconds(1);
-    int maxRetries = 3;
-
-    return errorFlux
-        .scan(
-            Collections.<Throwable>emptyList(),
-            (List<Throwable> last, Throwable latest) ->
-                Stream.concat(last.stream(), Stream.of(latest)).collect(Collectors.toList()))
-        .map(List::size)
-        .flatMap(
-            errorCount -> {
-              if (errorCount > maxRetries) {
-                return Mono.error(new IllegalStateException("Max retries exceeded"));
-              } else if (errorCount > 0) {
-                Duration retryDelay = getExponentialRetryDelay(initialRetryDelay, errorCount);
-                log.info("Will retry after error in " + retryDelay);
-                return Mono.delay(retryDelay).doOnNext(x -> log.info("Retrying..."));
-              }
-              return Mono.empty();
-            });
-  }
-
-  protected Duration getExponentialRetryDelay(Duration initial, int errorCount) {
-    long initialMs = initial.toMillis();
-    long exponentialMs = initialMs * (long) Math.pow(2, errorCount - 1.0);
-    return Duration.ofMillis(exponentialMs);
-  }
-
   protected String subscribeDestination(String destination) {
     if (!isConnected.get()) {
       return "sub-disconnected";
@@ -329,6 +296,7 @@ public class StompFluxClient {
   public <T> Flux<T> subscribe(
       String destination, Class<T> messageType, Duration minMessageFrequency) {
     connect();
+    log.info("Subscribing to " + destination);
     subscriptionDestinationIdMap.computeIfAbsent(destination, this::subscribeDestination);
 
     Flux<StompMessageFrame> messageFrameFlux =

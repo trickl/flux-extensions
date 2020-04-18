@@ -16,17 +16,10 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 @AllArgsConstructor
 @JsonInclude(JsonInclude.Include.NON_NULL)
-public class StreamDetails {
-  @NotNull protected String destination;
+public class SessionDetails {
+  @NotNull protected String id;
 
-  protected int subscriberCount;
-  protected int messageCount;
+  protected String userName;
   protected Instant connectionTime;
-  protected Instant subscriptionTime;
-  protected Instant lastMessageTime;
-  protected Instant cancelTime;
-  protected Instant completeTime;
-  protected Instant errorTime;
-  protected String errorMessage;
-  protected boolean isTerminated;
+  protected Instant disconnectionTime;
 }

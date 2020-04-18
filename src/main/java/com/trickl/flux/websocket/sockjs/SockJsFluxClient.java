@@ -61,6 +61,8 @@ public class SockJsFluxClient {
         .get(Flux.from(sendWithResponse).flatMap(new ThrowableMapper<>(this::write)))
         .flatMap(new ThrowableMapper<String, SockJsFrame>(message -> read(message, responseSink)))
         .onErrorContinue(JsonProcessingException.class, this::warnAndDropError)
+        .doOnTerminate(() -> log.info("SockJsFluxClient client terminated"))
+        .doOnCancel(() -> log.info("SockJsFluxClient client cancelled"))
         .publishOn(Schedulers.parallel())
         .publish()
         .refCount();

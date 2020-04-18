@@ -32,12 +32,16 @@ public class TextWebSocketFluxClient {
   public Flux<String> get(Publisher<String> send) {
     EmitterProcessor<String> receiveProcessor = EmitterProcessor.create();
     return Flux.<String, Disposable>using(
-        () -> connect(send, receiveProcessor.sink()).subscribeOn(Schedulers.parallel()).subscribe(),
+        () -> getConnection(send, receiveProcessor),
         connection -> receiveProcessor,
         connection -> {
           connection.dispose();
           log.info("Connection disposed.");
         });
+  }
+
+  protected Disposable getConnection(Publisher<String> send, EmitterProcessor<String> receive) {
+    return connect(send, receive.sink()).subscribeOn(Schedulers.parallel()).subscribe();
   }
 
   protected Mono<Void> connect(Publisher<String> send, FluxSink<String> receive) {
