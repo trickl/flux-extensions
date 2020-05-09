@@ -122,18 +122,21 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
   }
 
   protected void handleStreamCancel(StreamId streamId, SubscriptionDetails subscription) {
+    log.info("Stream cancelled " + streamId.toString());
     subscription.setCancelTime(Instant.now());
     setStreamTerminated(streamId, subscription.getId());
   }
 
   protected void handleStreamError(StreamId streamId, 
       SubscriptionDetails subscription, Throwable error) {
+    log.log(Level.WARNING, "Stream error " + streamId.toString(), error);
     subscription.setErrorTime(Instant.now());
     subscription.setErrorMessage(error.toString());
     setStreamTerminated(streamId, subscription.getId());
   }
 
   protected void handleStreamComplete(StreamId streamId, SubscriptionDetails subscription) {
+    log.info("Stream completed " + streamId.toString());
     subscription.setCompleteTime(Instant.now());
     setStreamTerminated(streamId, subscription.getId());
   }
@@ -154,6 +157,7 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
   }
 
   protected void handleConnection(SessionDetails session) {
+    log.info("Handling connection event with sessionId - " + session.getId());
     session.setConnectionTime(Instant.now());
     sessionDetails.put(session.getId(), session);
   }
@@ -172,21 +176,25 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
   }
 
   protected void handleFluxSubscriberCancel(SubscriptionDetails subscription) {
+    log.log(Level.INFO, "Subscriber cancelled " + subscription.toString());
     subscription.setSubscriberCount(subscription.getSubscriberCount() - 1);
     subscription.setCancelTime(Instant.now());
   }
 
   protected void handleFluxSubscriberError(SubscriptionDetails subscription, Throwable error) {    
+    log.log(Level.WARNING, "Subscriber error " + subscription.toString(), error);
     subscription.setErrorTime(Instant.now());
     subscription.setErrorMessage(error.toString());
   }
 
   protected void handleFluxSubscriberComplete(SubscriptionDetails subscription) {
+    log.log(Level.INFO, "Subscriber complete " + subscription.toString());
     subscription.setCompleteTime(Instant.now());
   }
 
   /** Cancel all subscriptions. */
   public void unsubscribeAll() {
+    log.log(Level.INFO, "Unsubscribing all.");
     subscriptionDetails.keySet().forEach(this::unsubscribe);
   }
 
@@ -266,8 +274,8 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
                 .build();
       
       try {        
-        if (sessionDetails.containsKey(sessionId)) {
-          log.warning("Received a subscribe without a corresponding session");
+        if (!sessionDetails.containsKey(sessionId)) {
+          log.warning("Received a subscribe without a corresponding session - " + sessionId);
         }
 
         handleSubscription(subscription);        
