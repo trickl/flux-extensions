@@ -77,6 +77,8 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
 
   protected void handleSubscription(SubscriptionDetails subscription) 
       throws SubscriptionFailedException {
+    log.info("Handling subscription " + subscription.getId());
+
     String destination = subscription.getDestination();
     SimpMessageSender<T> messageSender = new SimpMessageSender<>(messagingTemplate,
         destination);
@@ -137,6 +139,7 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
   }
 
   protected void setStreamTerminated(StreamId streamId, String subscriptionId) {
+    log.info("Marking stream as terminated " + streamId.toString());
     fluxes.computeIfPresent(
         streamId,
         (id, flux) -> {
@@ -156,12 +159,14 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
   }
 
   protected void handleStreamSubscription(SubscriptionDetails stream) {
+    log.info("Handling stream subscription " + stream.getId());
     stream.setSubscriptionTime(Instant.now());
     subscriptionDetails.put(stream.getDestination(), stream);
   }
 
   protected void handleFluxSubscription(SubscriptionDetails subscription,
       Subscription fluxSubscription) {
+    log.info("Handling flux subscription " + subscription.getId());
     subscription.setSubscriberCount(subscription.getSubscriberCount() + 1);
     subscriptions.put(subscription.getId(), fluxSubscription);
   }
@@ -262,8 +267,10 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
       
       try {        
         if (sessionDetails.containsKey(sessionId)) {
-          handleSubscription(subscription);
+          log.warning("Received a subscribe without a corresponding session");
         }
+
+        handleSubscription(subscription);        
       } catch (SubscriptionFailedException ex) {
         log.log(Level.WARNING, "Connect failed", ex);
       }
