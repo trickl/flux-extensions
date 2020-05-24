@@ -20,7 +20,6 @@ import org.springframework.web.reactive.socket.client.WebSocketClient;
 import org.springframework.web.socket.sockjs.client.SockJsUrlInfo;
 import reactor.core.publisher.EmitterProcessor;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
@@ -32,8 +31,6 @@ public class SockJsFluxClient {
   private final Mono<HttpHeaders> webSocketHeadersProvider;
   private final ObjectMapper objectMapper;
 
-  private final EmitterProcessor<SockJsFrame> responseProcessor = EmitterProcessor.create();
-
   private static final String SOCK_JS_OPEN = "o";
   private static final String SOCK_JS_CLOSE = "c";
   private static final String SOCK_JS_HEARTBEAT = "h";
@@ -44,6 +41,7 @@ public class SockJsFluxClient {
    * @return A reactive stream of messages.
    */
   public Flux<SockJsFrame> get(Publisher<SockJsFrame> send) {
+    EmitterProcessor<SockJsFrame> responseProcessor = EmitterProcessor.create();
     RawSockJsFluxClient sockJsClient =
         new RawSockJsFluxClient(
             webSocketClient,
@@ -56,10 +54,9 @@ public class SockJsFluxClient {
 
     Publisher<SockJsFrame> sendWithResponse = Flux.merge(send, responseProcessor);
 
-    FluxSink<SockJsFrame> responseSink = responseProcessor.sink();
     return sockJsClient
         .get(Flux.from(sendWithResponse).flatMap(new ThrowableMapper<>(this::write)))
-        .flatMap(new ThrowableMapper<String, SockJsFrame>(message -> read(message, responseSink)))
+        .flatMap(new ThrowableMapper<String, SockJsFrame>(this::read))
         .onErrorContinue(JsonProcessingException.class, this::warnAndDropError)
         .doOnTerminate(() -> log.info("SockJsFluxClient client terminated"))
         .doOnCancel(() -> log.info("SockJsFluxClient client cancelled"))
@@ -76,8 +73,7 @@ public class SockJsFluxClient {
             new Object[] {ex.getMessage(), value}));
   }
 
-  protected SockJsFrame read(String message, FluxSink<SockJsFrame> respond) throws IOException {
-
+  protected SockJsFrame read(String message) throws IOException {
     // Handle sockJs messages
     if (message.startsWith(SOCK_JS_OPEN)) {
       return new SockJsOpen();

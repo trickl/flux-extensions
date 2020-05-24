@@ -81,9 +81,9 @@ public class BinaryWebSocketFluxClient {
           subscriber.onComplete();
         })
         .doFinally(
-            signal -> {
-              afterDisconnect.run();
-            });
+            signal -> 
+              afterDisconnect.run()
+            );
   }
 
   protected SessionSubscriber subscribeConnection(
@@ -107,7 +107,7 @@ public class BinaryWebSocketFluxClient {
                   .execute(transportUri, sessionHandler)
                   .log("WebSocketClient", Level.FINER);
             })
-        .doOnError(error -> receiveSink.error(error))
+        .doOnError(receiveSink::error)
         .doFinally(
             signal -> {
               receiveSink.complete();

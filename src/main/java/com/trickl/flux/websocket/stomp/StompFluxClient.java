@@ -55,11 +55,15 @@ public class StompFluxClient {
 
   @Builder.Default private Runnable afterDisconnect = () -> { /* Noop */ };
 
+  @Builder.Default private  Duration initialRetryDelay = Duration.ofSeconds(1);
+  
+  @Builder.Default private  Duration retryConsiderationPeriod = Duration.ofSeconds(255);
+  
+  @Builder.Default private  int maxRetries = 8;
+
   private FluxSink<StompFrame> streamRequestSink;
 
-  private final EmitterProcessor<Duration> heartbeatSendProcessor = EmitterProcessor.create();
-
-  private final FluxSink<Duration> heartbeatSendSink = heartbeatSendProcessor.sink();
+  private FluxSink<Duration> heartbeatSendSink;
 
   private final AtomicInteger maxSubscriptionNumber = new AtomicInteger(0);
 
@@ -119,7 +123,8 @@ public class StompFluxClient {
           .doOnError(this::sendErrorFrame)
           .doAfterTerminate(this::handleTerminateStream),        
           this::closeConnectionContext)
-        .retryWhen(new ExponentialBackoffRetry(Duration.ofSeconds(1), 3))
+        .retryWhen(new ExponentialBackoffRetry(
+            initialRetryDelay, retryConsiderationPeriod, maxRetries))
         .publish()
         .refCount();
         
@@ -191,7 +196,9 @@ public class StompFluxClient {
   }
 
   protected Flux<StompFrame> buildSendWithResponse() {
-    Flux<StompFrame> heartbeats = heartbeatSendProcessor.switchMap(this::createHeartbeats);    
+    EmitterProcessor<Duration> heartbeatSendProcessor = EmitterProcessor.create();
+    Flux<StompFrame> heartbeats = heartbeatSendProcessor.switchMap(this::createHeartbeats);
+    heartbeatSendSink = heartbeatSendProcessor.sink();
 
     EmitterProcessor<StompFrame> responseProcessor = EmitterProcessor.create();
     EmitterProcessor<StompFrame> streamRequestProcessor = EmitterProcessor.create();

@@ -296,11 +296,67 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
     }
   }
 
-  public List<SessionDetails> getSessionDetails() {
-    return sessionDetails.values().stream().collect(Collectors.toList());
+  /**
+   * Get all session details.
+   */
+  public List<SessionDetails> getSessionDetailsByUpdateTimeAfter(Instant time) {
+    return sessionDetails.values()
+        .stream()
+        .filter((SessionDetails details) -> details.getDisconnectionTime() == null
+          || details.getDisconnectionTime().isAfter(time)           
+        )   
+        .sorted((SessionDetails a, SessionDetails b) -> {
+          Instant disconnectionTimeA = a.getDisconnectionTime();
+          Instant disconnectionTimeB = b.getDisconnectionTime();
+          if (disconnectionTimeA != null && disconnectionTimeB != null) {
+            return disconnectionTimeB.compareTo(disconnectionTimeA);
+          } else if (disconnectionTimeA != null) {
+            return 1;
+          } else if (disconnectionTimeB != null) {
+            return -1;
+          } else {
+            return b.getConnectionTime().compareTo(a.getConnectionTime());
+          }
+        })
+        .collect(Collectors.toList());
   }
 
-  public List<SubscriptionDetails> getSubscriptions() {
-    return subscriptionDetails.values().stream().collect(Collectors.toList());
+  /**
+   * Get all subscriptions.
+   * @return
+   */
+  public List<SubscriptionDetails> getSubscriptionsByUpdateTimeAfter(Instant time) {
+    return subscriptionDetails.values()
+        .stream()
+        .filter((SubscriptionDetails details) -> getTerminationTime(details) == null
+          || getTerminationTime(details).isAfter(time)        
+        )   
+        .sorted((SubscriptionDetails a, SubscriptionDetails b) -> {
+          Instant terminationTimeA = getTerminationTime(a);
+          Instant terminationTimeB = getTerminationTime(b);
+          if (terminationTimeA != null && terminationTimeB != null) {
+            return terminationTimeB.compareTo(terminationTimeA);
+          } else if (terminationTimeA != null) {
+            return 1;
+          } else if (terminationTimeB != null) {
+            return -1;
+          } else {
+            return b.getSubscriptionTime().compareTo(a.getSubscriptionTime());
+          }
+        }).collect(Collectors.toList());
+  }
+
+  /**
+   * Get subscription termination time.
+   */
+  public static Instant getTerminationTime(SubscriptionDetails subscriptionDetails) {
+    if (subscriptionDetails.getErrorTime() != null) {
+      return subscriptionDetails.getErrorTime();
+    } else if (subscriptionDetails.getCancelTime() != null) {
+      return subscriptionDetails.getCancelTime();
+    } else if (subscriptionDetails.getCompleteTime() != null) {
+      return subscriptionDetails.getCompleteTime();
+    }
+    return null;
   }
 }

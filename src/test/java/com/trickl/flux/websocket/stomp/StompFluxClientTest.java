@@ -85,6 +85,7 @@ public class StompFluxClientTest {
         .transportUriProvider(mockServer::getWebSocketUri)
         .connectionTimeout(Duration.ofSeconds(1))
         .beforeConnect(mockServer::start)
+        .maxRetries(3)
         .afterDisconnect(() -> {
           try {
             mockServer.shutdown();
@@ -146,6 +147,7 @@ public class StompFluxClientTest {
         .transportUriProvider(mockServer::getWebSocketUri)
         .connectionTimeout(Duration.ofSeconds(15))
         .heartbeatReceiveFrequency(Duration.ofSeconds(3))
+        .maxRetries(3)
         .beforeConnect(mockServer::start)
         .afterDisconnect(() -> {
           try {

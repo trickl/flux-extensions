@@ -28,27 +28,31 @@ public class BinaryWebSocketHandler implements WebSocketHandler {
   public Mono<Void> handle(WebSocketSession session) {
     Mono<Void> input = session.receive()
         .log("receive", Level.FINER)
-        .flatMap(new ThrowableMapper<>(this::handleMessage)).then();
+        .flatMap(new ThrowableMapper<>(this::handleMessage)).then()
+        .doFinally(signalType -> log.info("Input completed with signal - " + signalType.name()));
 
     Mono<Void> output =
         session.send(Flux.from(send)
            .log("send", Level.FINER)
-           .map(message -> createMessage(session, message)));
+           .map(message -> createMessage(session, message)))
+           .doFinally(signalType -> 
+               log.info("Output completed with signal - " + signalType.name()));
     
-    return Mono.usingWhen(Mono.just(session), sessionResource -> {
-      return Mono.zip(input, output).then();
-    }, sessionResource -> session.close().doOnSuccess(element -> {
-      log.log(Level.INFO, "Closed session.");
-    }));
+    return Mono.usingWhen(Mono.just(session), sessionResource -> 
+      Mono.zip(input, output).then()
+          .doFinally(signalType -> log.info(
+               "Binary socket stream completed with signal - " + signalType.name())),
+      sessionResource -> session.close().doOnSuccess(element -> 
+      log.log(Level.INFO, "Closed session.")
+    ));
   }
 
   protected WebSocketMessage createMessage(WebSocketSession session, byte[] message) {
-    return session.binaryMessage(
-        bufferFactory -> {
-          DataBuffer payload = bufferFactory.allocateBuffer(message.length);
-          payload.write(message);
-          return payload;
-        });
+    return session.binaryMessage(bufferFactory -> {
+      DataBuffer payload = bufferFactory.allocateBuffer(message.length);
+      payload.write(message);
+      return payload;
+    });
   }
 
   protected WebSocketMessage handleMessage(WebSocketMessage message) throws IOException {

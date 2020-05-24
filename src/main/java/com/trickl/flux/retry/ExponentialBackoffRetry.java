@@ -10,17 +10,21 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.java.Log;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.util.function.Tuple2;
 
 @Log
 @RequiredArgsConstructor
 public class ExponentialBackoffRetry implements Function<Flux<Throwable>, Flux<Long>> {
   final Duration initialRetryDelay;
+  final Duration considerationPeriod;
   final int maxRetries;
   
   @Override
   public Flux<Long> apply(Flux<Throwable> errorFlux) {
     return errorFlux
-        .scan(Collections.<Throwable>emptyList(), ExponentialBackoffRetry::accumulateErrors)
+        .elapsed()
+        .scan(Collections.<Tuple2<Long, Throwable>>emptyList(),
+            this::accumulateErrors)
         .map(List::size).flatMap(errorCount -> {
           if (errorCount > maxRetries) {
             return Mono.error(new IllegalStateException("Max retries exceeded"));
@@ -33,8 +37,12 @@ public class ExponentialBackoffRetry implements Function<Flux<Throwable>, Flux<L
         });
   }
 
-  protected static List<Throwable> accumulateErrors(List<Throwable> last, Throwable latest) {
-    return Stream.concat(last.stream(), Stream.of(latest)).collect(Collectors.toList());
+  protected List<Tuple2<Long, Throwable>> accumulateErrors(
+      List<Tuple2<Long, Throwable>> last, Tuple2<Long, Throwable> latest) {
+    long considerationStart = latest.getT1() - considerationPeriod.toMillis();
+    return Stream.concat(last.stream(), Stream.of(latest))
+      .filter(tuple -> tuple.getT1() > considerationStart)
+      .collect(Collectors.toList());
   }
 
   private Duration getExponentialRetryDelay(Duration initial, int errorCount) {
