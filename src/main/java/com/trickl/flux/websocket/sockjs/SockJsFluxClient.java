@@ -3,6 +3,7 @@ package com.trickl.flux.websocket.sockjs;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trickl.flux.mappers.ThrowableMapper;
+import com.trickl.flux.retry.ExponentialBackoffRetry;
 import com.trickl.flux.websocket.sockjs.frames.SockJsClose;
 import com.trickl.flux.websocket.sockjs.frames.SockJsFrame;
 import com.trickl.flux.websocket.sockjs.frames.SockJsHeartbeat;
@@ -10,8 +11,9 @@ import com.trickl.flux.websocket.sockjs.frames.SockJsMessage;
 import com.trickl.flux.websocket.sockjs.frames.SockJsOpen;
 import java.io.IOException;
 import java.text.MessageFormat;
+import java.time.Duration;
 import java.util.logging.Level;
-import lombok.RequiredArgsConstructor;
+import lombok.Builder;
 import lombok.extern.java.Log;
 import org.reactivestreams.Publisher;
 import org.springframework.http.HttpHeaders;
@@ -24,12 +26,18 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 @Log
-@RequiredArgsConstructor
+@Builder
 public class SockJsFluxClient {
   private final WebSocketClient webSocketClient;
   private final SockJsUrlInfo sockJsUrlInfo;
   private final Mono<HttpHeaders> webSocketHeadersProvider;
   private final ObjectMapper objectMapper;
+
+  @Builder.Default private  Duration initialRetryDelay = Duration.ofSeconds(1);
+  
+  @Builder.Default private  Duration retryConsiderationPeriod = Duration.ofSeconds(255);
+  
+  @Builder.Default private  int maxRetries = 8;
 
   private static final String SOCK_JS_OPEN = "o";
   private static final String SOCK_JS_CLOSE = "c";
@@ -60,6 +68,8 @@ public class SockJsFluxClient {
         .onErrorContinue(JsonProcessingException.class, this::warnAndDropError)
         .doOnTerminate(() -> log.info("SockJsFluxClient client terminated"))
         .doOnCancel(() -> log.info("SockJsFluxClient client cancelled"))
+        .retryWhen(new ExponentialBackoffRetry(
+            initialRetryDelay, retryConsiderationPeriod, maxRetries))
         .publishOn(Schedulers.parallel())
         .publish()
         .refCount();
