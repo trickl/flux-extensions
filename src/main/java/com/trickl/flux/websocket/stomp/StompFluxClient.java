@@ -34,6 +34,7 @@ import org.springframework.web.reactive.socket.client.WebSocketClient;
 import reactor.core.publisher.EmitterProcessor;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
+import reactor.core.publisher.Mono;
 
 @Log
 @Builder
@@ -94,7 +95,7 @@ public class StompFluxClient {
         RawStompFluxClient.builder()
             .webSocketClient(webSocketClient)
             .transportUriProvider(transportUriProvider)
-            .webSocketHeadersProvider(webSocketHeadersProvider)
+            .webSocketHeadersProvider(Mono.fromSupplier(webSocketHeadersProvider))
             .heartbeatSendFrequency(heartbeatSendFrequency)
             .heartbeatReceiveFrequency(heartbeatReceiveFrequency)
             .beforeConnect(beforeConnect)
@@ -123,7 +124,7 @@ public class StompFluxClient {
           .doOnError(this::sendErrorFrame)
           .doAfterTerminate(this::handleTerminateStream),        
           this::closeConnectionContext)
-        .retryWhen(new ExponentialBackoffRetry(
+          .retryWhen(new ExponentialBackoffRetry(
             initialRetryDelay, retryConsiderationPeriod, maxRetries))
         .publish()
         .refCount();

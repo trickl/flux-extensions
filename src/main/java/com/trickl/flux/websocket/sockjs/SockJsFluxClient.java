@@ -17,10 +17,8 @@ import lombok.Builder;
 import lombok.extern.java.Log;
 import org.reactivestreams.Publisher;
 import org.springframework.http.HttpHeaders;
-import org.springframework.web.reactive.socket.CloseStatus;
 import org.springframework.web.reactive.socket.client.WebSocketClient;
 import org.springframework.web.socket.sockjs.client.SockJsUrlInfo;
-import reactor.core.publisher.EmitterProcessor;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -39,31 +37,22 @@ public class SockJsFluxClient {
   
   @Builder.Default private  int maxRetries = 8;
 
-  private static final String SOCK_JS_OPEN = "o";
-  private static final String SOCK_JS_CLOSE = "c";
-  private static final String SOCK_JS_HEARTBEAT = "h";
-
   /**
    * Get messages from the stream.
    *
    * @return A reactive stream of messages.
    */
   public Flux<SockJsFrame> get(Publisher<SockJsFrame> send) {
-    EmitterProcessor<SockJsFrame> responseProcessor = EmitterProcessor.create();
     RawSockJsFluxClient sockJsClient =
-        new RawSockJsFluxClient(
-            webSocketClient,
-            sockJsUrlInfo,
-            webSocketHeadersProvider,
-            objectMapper,
-            () -> SOCK_JS_OPEN,
-            () -> SOCK_JS_HEARTBEAT,
-            (CloseStatus status) -> SOCK_JS_CLOSE + status.getCode());
-
-    Publisher<SockJsFrame> sendWithResponse = Flux.merge(send, responseProcessor);
+        RawSockJsFluxClient.builder()
+            .webSocketClient(webSocketClient)
+            .sockJsUrlInfo(sockJsUrlInfo)
+            .webSocketHeadersProvider(webSocketHeadersProvider)
+            .objectMapper(objectMapper)
+            .build();
 
     return sockJsClient
-        .get(Flux.from(sendWithResponse).flatMap(new ThrowableMapper<>(this::write)))
+        .get(Flux.from(send).flatMap(new ThrowableMapper<>(this::write)))
         .flatMap(new ThrowableMapper<String, SockJsFrame>(this::read))
         .onErrorContinue(JsonProcessingException.class, this::warnAndDropError)
         .doOnTerminate(() -> log.info("SockJsFluxClient client terminated"))
@@ -85,12 +74,13 @@ public class SockJsFluxClient {
 
   protected SockJsFrame read(String message) throws IOException {
     // Handle sockJs messages
-    if (message.startsWith(SOCK_JS_OPEN)) {
+    if (message.startsWith(RawSockJsFluxClient.SOCK_JS_OPEN)) {
       return new SockJsOpen();
-    } else if (message.startsWith(SOCK_JS_HEARTBEAT)) {
+    } else if (message.startsWith(RawSockJsFluxClient.SOCK_JS_HEARTBEAT)) {
       return new SockJsHeartbeat();
-    } else if (message.startsWith(SOCK_JS_CLOSE)) {
-      int closeStatus = Integer.parseInt(message.substring(SOCK_JS_CLOSE.length()));
+    } else if (message.startsWith(RawSockJsFluxClient.SOCK_JS_CLOSE)) {
+      int closeStatus = Integer.parseInt(message.substring(
+          RawSockJsFluxClient.SOCK_JS_CLOSE.length()));
       return new SockJsClose(closeStatus);
     }
 

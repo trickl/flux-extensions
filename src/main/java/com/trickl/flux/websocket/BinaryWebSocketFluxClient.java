@@ -35,11 +35,12 @@ public class BinaryWebSocketFluxClient {
         /* Noop */
       };
 
-  private final WebSocketClient webSocketClient;
+  protected final WebSocketClient webSocketClient;
 
-  private final Supplier<URI> transportUriProvider;
+  protected final Supplier<URI> transportUriProvider;
 
-  @Builder.Default private Supplier<HttpHeaders> webSocketHeadersProvider = HttpHeaders::new;
+  @Builder.Default private Mono<HttpHeaders> webSocketHeadersProvider
+      = Mono.fromSupplier(HttpHeaders::new);
 
   @Builder.Default private Duration sessionTimeout = Duration.ofSeconds(5);
 
@@ -93,7 +94,7 @@ public class BinaryWebSocketFluxClient {
       FluxSink<byte[]> receiveSink,
       Publisher<WebSocketSession> sessionPublisher,
       FluxSink<WebSocketSession> sessionSink) {
-    return Mono.fromSupplier(webSocketHeadersProvider)
+    return webSocketHeadersProvider
         .<Void>flatMap(
             headers -> {
               beforeConnect.run();

@@ -18,13 +18,15 @@ import org.springframework.web.reactive.socket.client.WebSocketClient;
 import reactor.core.publisher.EmitterProcessor;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
+import reactor.core.publisher.Mono;
 
 @Log
 @Builder
 public class RawStompFluxClient {
   private final WebSocketClient webSocketClient;
   private final Supplier<URI> transportUriProvider;
-  @Builder.Default private Supplier<HttpHeaders> webSocketHeadersProvider = HttpHeaders::new;
+  @Builder.Default private Mono<HttpHeaders> webSocketHeadersProvider
+      = Mono.fromSupplier(HttpHeaders::new);
   @Builder.Default private Duration heartbeatSendFrequency = Duration.ofSeconds(5);
   @Builder.Default private Duration heartbeatReceiveFrequency = Duration.ofSeconds(5);
   @Builder.Default private Duration disconnectReceiptTimeout = Duration.ofMillis(500);
