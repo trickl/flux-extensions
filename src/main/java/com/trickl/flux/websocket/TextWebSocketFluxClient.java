@@ -105,7 +105,7 @@ public class TextWebSocketFluxClient {
               URI transportUri = transportUriProvider.get();
               log.info("Connecting to " + transportUri);
               return webSocketClient
-                  .execute(transportUri, sessionHandler)
+                  .execute(transportUri, headers, sessionHandler)
                   .log("WebSocketClient", Level.FINER);
             })
         .doOnError(receiveSink::error)
