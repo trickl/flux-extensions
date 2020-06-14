@@ -1,9 +1,7 @@
 package com.trickl.flux.websocket.sockjs;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.trickl.exceptions.AbnormalTerminationException;
 import java.io.IOException;
-import java.text.MessageFormat;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.logging.Level;
@@ -100,14 +98,6 @@ public class SockJsInputTransformer implements Function<Publisher<String>, Flux<
         }
         if (log.isLoggable(Level.FINE)) {
           log.fine("Processing SockJS close frame with " + closeStatus);
-        }
-
-        if (closeStatus != CloseStatus.NORMAL) {
-          String errorMessage = MessageFormat.format(
-              "Unexpected SockJS Close ({0}) - {1}", 
-              closeStatus.getCode(), closeStatus.getReason());
-          log.warning(errorMessage);
-          return Mono.error(new AbnormalTerminationException(errorMessage));
         }
       }
     } catch (IOException ex) {

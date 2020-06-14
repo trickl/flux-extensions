@@ -1,7 +1,8 @@
 package com.trickl.flux.websocket.sockjs;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.trickl.flux.websocket.TextWebSocketFluxClient;
+import com.trickl.flux.websocket.TextWebSocketHandler;
+import com.trickl.flux.websocket.WebSocketFluxClient;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.logging.Level;
@@ -34,16 +35,10 @@ public class RawSockJsFluxClient {
       = Mono.fromSupplier(HttpHeaders::new);
 
   @Builder.Default
-  private Runnable beforeConnect =
-      () -> {
-        /* Noop */
-      };
+  private Mono<Void> doBeforeSessionOpen = Mono.empty();
 
   @Builder.Default
-  private Runnable afterDisconnect =
-      () -> {
-        /* Noop */
-      };  
+  private Mono<Void> doAfterSessionClose = Mono.empty();
 
   /**
    * Connect to a sockjs service.
@@ -57,15 +52,15 @@ public class RawSockJsFluxClient {
             objectMapper, openMessageSupplier, hearbeatMessageSupplier, closeMessageFunction);
     SockJsOutputTransformer sockJsOutputTransformer = new SockJsOutputTransformer(objectMapper);
 
-    TextWebSocketFluxClient webSocketFluxClient =
-        TextWebSocketFluxClient.builder()
+    WebSocketFluxClient<String> webSocketFluxClient =
+        WebSocketFluxClient.<String>builder()
             .webSocketClient(webSocketClient)
             .transportUriProvider(() -> sockJsUrlInfo.getTransportUrl(TransportType.WEBSOCKET))
+            .handlerFactory(TextWebSocketHandler::new)
             .webSocketHeadersProvider(webSocketHeadersProvider)
-            .beforeConnect(beforeConnect)
-            .afterDisconnect(afterDisconnect)
+            .doBeforeSessionOpen(doBeforeSessionOpen)
+            .doAfterSessionClose(doAfterSessionClose)
             .build();
-
 
     return sockJsInputTransformer.apply(
         webSocketFluxClient.get(

@@ -36,7 +36,8 @@ public class BinaryWebSocketHandler implements WebSocketHandler {
            .log("send", Level.FINER)
            .map(message -> createMessage(session, message)))
            .doFinally(signalType -> 
-               log.info("Output completed with signal - " + signalType.name()));
+               log.info("Output completed with signal - " 
+               + signalType.name())).log("output", Level.FINER);
     
     return Mono.usingWhen(Mono.just(session), sessionResource -> 
       Mono.zip(input, output).then()

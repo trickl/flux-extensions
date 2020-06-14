@@ -7,9 +7,7 @@ import com.trickl.flux.websocket.MockServerWithWebSocket;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.regex.Pattern;
-
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.reactivestreams.Subscription;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,6 +18,7 @@ import org.springframework.web.reactive.socket.client.ReactorNettyWebSocketClien
 import org.springframework.web.reactive.socket.client.WebSocketClient;
 
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 @ActiveProfiles({"unittest"})
@@ -39,6 +38,8 @@ public class StompFluxClientTest {
       = Pattern.compile("DISCONNECT.*", Pattern.DOTALL);
   private static final String STOMP_CONNECTED_MESSAGE = 
       "CONNECTED\nversion:1.2\nheart-beat:3000,3000\n\n\u0000";
+  private static final String STOMP_RECEIPT_MESSAGE = 
+      "RECEIPT\nreceipt-id:message-12345\n\n\u0000";
 
   @BeforeEach
   private void setup() {      
@@ -52,8 +53,20 @@ public class StompFluxClientTest {
     subscription = null;
   }
 
+  Mono<Void> shutdown(MockServerWithWebSocket mockServer) {
+    return Mono.delay(Duration.ofMillis(500)).then(
+      Mono.create(sink -> {
+        try {
+          mockServer.shutdown();
+        } catch (IOException ex) {
+          sink.error(new IllegalStateException("Unable to shutdown server", ex));
+        }
+        sink.success();    
+      })
+    ).then(Mono.delay(Duration.ofMillis(500))).then();
+  }
+
   @Test
-  @Disabled
   public void testNoConnectionRetry() {
 
     MockServerWithWebSocket mockServer = new MockServerWithWebSocket();
@@ -62,19 +75,16 @@ public class StompFluxClientTest {
         .thenWaitServerStartThenUpgrade()
         .thenExpectOpen()
         .thenExpectMessage(STOMP_CONNECT_PATTERN)
-        .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
         .thenExpectClose()
         .thenWaitServerShutdown()
         .thenWaitServerStartThenUpgrade()
         .thenExpectOpen()        
         .thenExpectMessage(STOMP_CONNECT_PATTERN)
-        .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
         .thenExpectClose()
         .thenWaitServerShutdown()
         .thenWaitServerStartThenUpgrade()    
         .thenExpectOpen()        
         .thenExpectMessage(STOMP_CONNECT_PATTERN)
-        .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
         .thenExpectClose()
         .thenVerify(); 
 
@@ -84,15 +94,12 @@ public class StompFluxClientTest {
         .webSocketClient(client)
         .transportUriProvider(mockServer::getWebSocketUri)
         .connectionTimeout(Duration.ofSeconds(1))
-        .beforeConnect(mockServer::start)
+        .doBeforeSessionOpen(Mono.defer(() -> {
+          mockServer.start();          
+          return Mono.delay(Duration.ofMillis(500)).then();
+        }))
         .maxRetries(3)
-        .afterDisconnect(() -> {
-          try {
-            mockServer.shutdown();
-          } catch (IOException ex) {
-            throw new IllegalStateException("Unable to shutdown server", ex);
-          }
-        })
+        .doAfterSessionClose(Mono.defer(() -> shutdown(mockServer)))
         .build();
 
     Flux<String> output = stompClient.subscribe(
@@ -100,10 +107,10 @@ public class StompFluxClientTest {
 
     StepVerifier.create(output)
         .consumeSubscriptionWith(sub -> subscription = sub)
-        .expectError()
+        //.expectError()
         //.then(this::unsubscribe)
-        //.expectComplete()
-        .verify();
+        .expectComplete()
+        .verify(Duration.ofMinutes(30));
   }
 
   @Test
@@ -119,6 +126,7 @@ public class StompFluxClientTest {
         .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
         .thenExpectMessage(STOMP_SUBSCRIBE_PATTERN)
         .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
+        .thenSend(STOMP_RECEIPT_MESSAGE)
         .thenExpectClose()
         .thenWaitServerShutdown()
         .thenWaitServerStartThenUpgrade()
@@ -128,15 +136,17 @@ public class StompFluxClientTest {
         .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
         .thenExpectMessage(STOMP_SUBSCRIBE_PATTERN)
         .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
+        .thenSend(STOMP_RECEIPT_MESSAGE)
         .thenExpectClose()
         .thenWaitServerShutdown()
         .thenWaitServerStartThenUpgrade()    
         .thenExpectOpen()        
         .thenExpectMessage(STOMP_CONNECT_PATTERN)
-        .thenSend(STOMP_CONNECTED_MESSAGE)
-        .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
+        .thenSend(STOMP_CONNECTED_MESSAGE)                
         .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
         .thenExpectMessage(STOMP_SUBSCRIBE_PATTERN)
+        .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
+        .thenSend(STOMP_RECEIPT_MESSAGE)
         .thenExpectClose()
         .thenVerify(); 
 
@@ -148,24 +158,28 @@ public class StompFluxClientTest {
         .connectionTimeout(Duration.ofSeconds(15))
         .heartbeatReceiveFrequency(Duration.ofSeconds(3))
         .maxRetries(3)
-        .beforeConnect(mockServer::start)
-        .afterDisconnect(() -> {
+        .doBeforeSessionOpen(Mono.defer(() -> {
+          mockServer.start();          
+          return Mono.delay(Duration.ofMillis(500)).then();
+        }))
+        .doAfterSessionClose(Mono.defer(() -> {
           try {
             mockServer.shutdown();
           } catch (IOException ex) {
             throw new IllegalStateException("Unable to shutdown server", ex);
           }
-        })
+          return Mono.delay(Duration.ofMillis(500)).then();
+        }))
         .build();
 
     Flux<String> output = stompClient.subscribe(
         "/messages", String.class, Duration.ofMinutes(30));
 
     StepVerifier.create(output)
-        .consumeSubscriptionWith(sub -> subscription = sub)
-        .expectError()
+        .consumeSubscriptionWith(sub -> subscription = sub)        
+        //.expectError()
         //.then(this::unsubscribe)
-        //.expectComplete()
-        .verify();
+        .expectComplete()
+        .verify(Duration.ofSeconds(30));
   }
 }

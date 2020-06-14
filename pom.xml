@@ -39,7 +39,6 @@
   </scm>
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <okhttp3.version>4.4.0</okhttp3.version>
   </properties>
   <dependencies>
     <dependency>
@@ -72,7 +71,7 @@
     <dependency>
       <groupId>com.github.trickl</groupId>
       <artifactId>flux-mock-websocket</artifactId>
-      <version>0.0.1-SNAPSHOT</version>
+      <version>0.0.2-SNAPSHOT</version>
     </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>

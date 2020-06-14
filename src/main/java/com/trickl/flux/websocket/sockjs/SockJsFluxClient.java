@@ -17,6 +17,7 @@ import lombok.Builder;
 import lombok.extern.java.Log;
 import org.reactivestreams.Publisher;
 import org.springframework.http.HttpHeaders;
+import org.springframework.web.reactive.socket.CloseStatus;
 import org.springframework.web.reactive.socket.client.WebSocketClient;
 import org.springframework.web.socket.sockjs.client.SockJsUrlInfo;
 import reactor.core.publisher.Flux;
@@ -30,6 +31,8 @@ public class SockJsFluxClient {
   private final SockJsUrlInfo sockJsUrlInfo;
   private final Mono<HttpHeaders> webSocketHeadersProvider;
   private final ObjectMapper objectMapper;
+
+  @Builder.Default private Runnable onTerminate = () -> { /* NOOP */ };
 
   @Builder.Default private  Duration initialRetryDelay = Duration.ofSeconds(1);
   
@@ -54,9 +57,9 @@ public class SockJsFluxClient {
     return sockJsClient
         .get(Flux.from(send).flatMap(new ThrowableMapper<>(this::write)))
         .flatMap(new ThrowableMapper<String, SockJsFrame>(this::read))
+        .flatMap(new SockJsAbnormalCloseProcessor())
         .onErrorContinue(JsonProcessingException.class, this::warnAndDropError)
-        .doOnTerminate(() -> log.info("SockJsFluxClient client terminated"))
-        .doOnCancel(() -> log.info("SockJsFluxClient client cancelled"))
+        .doOnTerminate(onTerminate)
         .retryWhen(new ExponentialBackoffRetry(
             initialRetryDelay, retryConsiderationPeriod, maxRetries))
         .publishOn(Schedulers.parallel())
@@ -79,9 +82,9 @@ public class SockJsFluxClient {
     } else if (message.startsWith(RawSockJsFluxClient.SOCK_JS_HEARTBEAT)) {
       return new SockJsHeartbeat();
     } else if (message.startsWith(RawSockJsFluxClient.SOCK_JS_CLOSE)) {
-      int closeStatus = Integer.parseInt(message.substring(
+      int code = Integer.parseInt(message.substring(
           RawSockJsFluxClient.SOCK_JS_CLOSE.length()));
-      return new SockJsClose(closeStatus);
+      return new SockJsClose(new CloseStatus(code));
     }
 
     return new SockJsMessage(message);

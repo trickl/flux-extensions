@@ -1,26 +1,18 @@
 package com.trickl.flux.websocket.stomp;
 
-import com.trickl.flux.websocket.BinaryWebSocketFluxClient;
-import com.trickl.flux.websocket.stomp.frames.StompConnectFrame;
-import com.trickl.flux.websocket.stomp.frames.StompDisconnectFrame;
-import java.io.IOException;
+import com.trickl.flux.websocket.BinaryWebSocketHandler;
+import com.trickl.flux.websocket.WebSocketFluxClient;
 import java.net.URI;
 import java.time.Duration;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import java.util.logging.Level;
 import lombok.Builder;
-import lombok.extern.java.Log;
 import org.reactivestreams.Publisher;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.reactive.socket.client.WebSocketClient;
-import reactor.core.publisher.EmitterProcessor;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
 
-@Log
 @Builder
 public class RawStompFluxClient {
   private final WebSocketClient webSocketClient;
@@ -32,16 +24,16 @@ public class RawStompFluxClient {
   @Builder.Default private Duration disconnectReceiptTimeout = Duration.ofMillis(500);
 
   @Builder.Default
-  private Runnable beforeConnect =
-      () -> {
-        /* Noop */
-      };
+  private Mono<Void> doBeforeSessionOpen = Mono.empty();
 
   @Builder.Default
-  private Runnable afterDisconnect =
-      () -> {
-        /* Noop */
-      };
+  private Mono<Void>  doAfterOpen = Mono.empty();
+
+  @Builder.Default
+  private Mono<Void> doBeforeClose = Mono.empty();
+
+  @Builder.Default
+  private Mono<Void> doAfterSessionClose = Mono.empty();
 
   /**
    * Connect to a stomp service.
@@ -53,61 +45,22 @@ public class RawStompFluxClient {
     StompInputTransformer stompInputTransformer = new StompInputTransformer();
     StompOutputTransformer stompOutputTransformer = new StompOutputTransformer();
 
-    BinaryWebSocketFluxClient webSocketFluxClient =
-        BinaryWebSocketFluxClient.builder()
+    WebSocketFluxClient<byte[]> webSocketFluxClient =
+        WebSocketFluxClient.<byte[]>builder()
             .webSocketClient(webSocketClient)
             .transportUriProvider(transportUriProvider)
+            .handlerFactory(BinaryWebSocketHandler::new)
             .webSocketHeadersProvider(webSocketHeadersProvider)
-            .beforeConnect(beforeConnect)
-            .afterConnect(this::afterConnect)
-            .beforeDisconnect(this::beforeDisconnect)
-            .afterDisconnect(afterDisconnect)
+            .doBeforeSessionOpen(doBeforeSessionOpen)
+            .doAfterOpen(doAfterOpen)
+            .doBeforeClose(doBeforeClose)
+            .doAfterSessionClose(doAfterSessionClose)
             .build();
+
     return stompInputTransformer
         .apply(
             webSocketFluxClient.get(
-                stompOutputTransformer.apply(
-                    Flux.defer(
-                        () -> {
-                          EmitterProcessor<StompFrame> frameProcessor = EmitterProcessor.create();
-                          return Flux.merge(frameProcessor, send);
-                        }))))
+                stompOutputTransformer.apply(send)))
         .log("Raw Stomp Flux Client", Level.FINER);
-  }
-
-  protected void afterConnect(FluxSink<byte[]> sendSink) {
-    log.info("Sending connect frame after connection");
-    StompMessageCodec codec = new StompMessageCodec();
-    StompConnectFrame connectFrame =
-        StompConnectFrame.builder()
-            .acceptVersion("1.0,1.1,1.2")
-            .heartbeatSendFrequency(heartbeatSendFrequency)
-            .heartbeatReceiveFrequency(heartbeatReceiveFrequency)
-            .host(transportUriProvider.get().getHost())
-            .build();
-    try {
-      byte[] encoded = codec.encode(connectFrame);
-      sendSink.next(encoded);
-    } catch (IOException ex) {
-      log.log(Level.WARNING, "Bad connection frame encoding", ex);
-    }
-  }
-
-  protected void beforeDisconnect(FluxSink<byte[]> sendSink) {
-    CountDownLatch countDownLatch = new CountDownLatch(1);
-    StompMessageCodec codec = new StompMessageCodec();
-    StompDisconnectFrame disconnectFrame = StompDisconnectFrame.builder().build();
-    try {
-      byte[] encodedFrame = codec.encode(disconnectFrame);
-      sendSink.next(encodedFrame);
-      if (countDownLatch.await(disconnectReceiptTimeout.toMillis(), TimeUnit.MILLISECONDS)) {
-        log.info("No receipt for disconnect in time, closing socket anyway");
-      }
-    } catch (InterruptedException ex) {
-      log.info("Interruped wait on disconnect receipt");
-      Thread.currentThread().interrupt();
-    } catch (IOException ex) {
-      log.log(Level.WARNING, "Bad disconnection frame encoding", ex);
-    }
   }
 }
