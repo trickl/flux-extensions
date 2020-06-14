@@ -86,6 +86,7 @@ public class StompFluxClientTest {
         .thenExpectOpen()        
         .thenExpectMessage(STOMP_CONNECT_PATTERN)
         .thenExpectClose()
+        .thenWaitServerShutdown()
         .thenVerify(); 
 
     WebSocketClient client = new ReactorNettyWebSocketClient();
@@ -98,7 +99,7 @@ public class StompFluxClientTest {
           mockServer.start();          
           return Mono.delay(Duration.ofMillis(500)).then();
         }))
-        .maxRetries(3)
+        .maxRetries(2)
         .doAfterSessionClose(Mono.defer(() -> shutdown(mockServer)))
         .build();
 
@@ -107,9 +108,7 @@ public class StompFluxClientTest {
 
     StepVerifier.create(output)
         .consumeSubscriptionWith(sub -> subscription = sub)
-        //.expectError()
-        //.then(this::unsubscribe)
-        .expectComplete()
+        .expectErrorMessage("Max retries exceeded")
         .verify(Duration.ofMinutes(30));
   }
 
@@ -157,7 +156,7 @@ public class StompFluxClientTest {
         .transportUriProvider(mockServer::getWebSocketUri)
         .connectionTimeout(Duration.ofSeconds(15))
         .heartbeatReceiveFrequency(Duration.ofSeconds(3))
-        .maxRetries(3)
+        .maxRetries(2)
         .doBeforeSessionOpen(Mono.defer(() -> {
           mockServer.start();          
           return Mono.delay(Duration.ofMillis(500)).then();
@@ -177,9 +176,7 @@ public class StompFluxClientTest {
 
     StepVerifier.create(output)
         .consumeSubscriptionWith(sub -> subscription = sub)        
-        //.expectError()
-        //.then(this::unsubscribe)
-        .expectComplete()
+        .expectErrorMessage("Max retries exceeded")
         .verify(Duration.ofSeconds(30));
   }
 }
