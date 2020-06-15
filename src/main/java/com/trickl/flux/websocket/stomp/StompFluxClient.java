@@ -92,12 +92,12 @@ public class StompFluxClient {
       connectionExpectationProcessor, 
       connectionExpectationSink,
       responseProcessor,
-      streamRequestProcessor,
+      streamRequestProcessor.log("streamRequest"),
       streamRequestSink);
   }
 
-  protected Mono<BaseStreamContext> getBaseStreamContext() {
-    return Mono.<BaseStreamContext, ResponseContext>usingWhen(
+  protected Flux<BaseStreamContext> getBaseStreamContext() {
+    return Flux.<BaseStreamContext, ResponseContext>usingWhen(
       Mono.fromSupplier(this::createResponseContext),
       this::getBaseStreamContext,
       context -> {
@@ -106,14 +106,14 @@ public class StompFluxClient {
         context.getStreamRequestSink().complete();
         return Mono.empty();
       }
-    );
+    ).log("baseStreamContext");
   }
 
   protected Mono<BaseStreamContext> getBaseStreamContext(ResponseContext context) {
     log.info("Creating base stream context");
     Publisher<StompFrame> sendWithResponse = Flux.merge(
-        context.getStreamRequestProcessor().log("stream request processor", Level.FINER), 
-        context.getResponseProcessor())
+        Flux.from(context.getStreamRequestProcessor()), 
+        Flux.from(context.getResponseProcessor()))
         .onErrorMap(new WarnOnErrorMapper());
 
     RawStompFluxClient stompFluxClient =
@@ -150,12 +150,13 @@ public class StompFluxClient {
     );     
   }
   
-  protected Mono<SharedStreamContext> connectStream() {
+  protected Flux<SharedStreamContext> connectStream() {
 
-    return Mono.<SharedStreamContext, BaseStreamContext>usingWhen(
+    return Flux.<SharedStreamContext, BaseStreamContext>usingWhen(
       getBaseStreamContext(),
-      context -> Mono.fromSupplier(() -> connectStream(context)),
+      context -> Flux.generate(sink -> sink.next(connectStream(context))),
         context -> {
+          log.info("Cleaning up connection");
           EmitterProcessor<Duration> receiptExpectationProcessor = EmitterProcessor.create();
           FluxSink<Duration> receiptExpectationSink = receiptExpectationProcessor.sink();
           disconnect(context.getStreamRequestSink(), receiptExpectationSink);
@@ -166,6 +167,7 @@ public class StompFluxClient {
           .cast(StompReceiptFrame.class);
       }
     )
+    .log("connectStream")
     .retryWhen(new ExponentialBackoffRetry(
       initialRetryDelay, retryConsiderationPeriod, maxRetries));
   }
@@ -195,7 +197,7 @@ public class StompFluxClient {
         .onErrorMap(new WarnOnErrorMapper())
         .doOnError(error -> sendErrorFrame(error, context.getStreamRequestSink()))
         .share()
-        .log("sharedStream", Level.FINE);
+        .log("sharedStream", Level.INFO);
 
     return new SharedStreamContext(
       sharedStream, 
@@ -265,6 +267,7 @@ public class StompFluxClient {
       FluxSink<StompFrame> streamRequestSink,
       FluxSink<Duration> receiptExpectationSink) {
     StompDisconnectFrame disconnectFrame = StompDisconnectFrame.builder().build();
+    log.info("Disconnecting...");
     streamRequestSink.next(disconnectFrame);
     receiptExpectationSink.next(disconnectionReceiptTimeout);
     receiptExpectationSink.complete();
@@ -411,7 +414,7 @@ public class StompFluxClient {
   }
 
   protected <T> Flux<T> subscribe(SharedStreamContext context, 
-      String destination, Class<T> messageType, Duration minMessageFrequency) {
+      String destination, Class<T> messageType, Duration minMessageFrequency) {    
     Flux<StompMessageFrame> messageFrameFlux =
         context.getSource()
         .filter(frame -> frame instanceof StompMessageFrame)
@@ -455,13 +458,13 @@ public class StompFluxClient {
 
   @Value
   private static class ResponseContext {
-    protected final EmitterProcessor<Duration> connectionExpectationProcessor;
+    protected final Publisher<Duration> connectionExpectationProcessor;
 
     protected final FluxSink<Duration> connectionExpectationSink;
     
-    protected final EmitterProcessor<StompFrame> responseProcessor;
+    protected final Publisher<StompFrame> responseProcessor;
 
-    protected final EmitterProcessor<StompFrame> streamRequestProcessor;
+    protected final Publisher<StompFrame> streamRequestProcessor;
 
     protected final FluxSink<StompFrame> streamRequestSink;
   }

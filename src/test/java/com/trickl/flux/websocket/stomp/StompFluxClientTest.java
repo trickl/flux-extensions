@@ -109,7 +109,7 @@ public class StompFluxClientTest {
     StepVerifier.create(output)
         .consumeSubscriptionWith(sub -> subscription = sub)
         .expectErrorMessage("Max retries exceeded")
-        .verify(Duration.ofMinutes(30));
+        .verify(Duration.ofSeconds(30));
   }
 
   @Test
@@ -121,9 +121,11 @@ public class StompFluxClientTest {
         .thenWaitServerStartThenUpgrade()
         .thenExpectOpen()
         .thenExpectMessage(STOMP_CONNECT_PATTERN)
-        .thenSend(STOMP_CONNECTED_MESSAGE)
-        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
+        .thenSend(STOMP_CONNECTED_MESSAGE)        
         .thenExpectMessage(STOMP_SUBSCRIBE_PATTERN)
+        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
+        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
+        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
         .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
         .thenSend(STOMP_RECEIPT_MESSAGE)
         .thenExpectClose()
@@ -132,8 +134,10 @@ public class StompFluxClientTest {
         .thenExpectOpen()        
         .thenExpectMessage(STOMP_CONNECT_PATTERN)
         .thenSend(STOMP_CONNECTED_MESSAGE)
-        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
         .thenExpectMessage(STOMP_SUBSCRIBE_PATTERN)
+        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
+        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
+        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
         .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
         .thenSend(STOMP_RECEIPT_MESSAGE)
         .thenExpectClose()
@@ -142,11 +146,14 @@ public class StompFluxClientTest {
         .thenExpectOpen()        
         .thenExpectMessage(STOMP_CONNECT_PATTERN)
         .thenSend(STOMP_CONNECTED_MESSAGE)                
-        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
         .thenExpectMessage(STOMP_SUBSCRIBE_PATTERN)
+        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
+        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
+        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
         .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
         .thenSend(STOMP_RECEIPT_MESSAGE)
         .thenExpectClose()
+        .thenWaitServerShutdown()
         .thenVerify(); 
 
     WebSocketClient client = new ReactorNettyWebSocketClient();
