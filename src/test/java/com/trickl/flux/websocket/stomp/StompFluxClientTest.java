@@ -34,6 +34,10 @@ public class StompFluxClientTest {
   private static final Pattern STOMP_HEARTBEAT_PATTERN = Pattern.compile("\\s*", Pattern.DOTALL);
   private static final Pattern STOMP_SUBSCRIBE_PATTERN = 
       Pattern.compile("SUBSCRIBE.*", Pattern.DOTALL);
+  private static final Pattern STOMP_UNSUBSCRIBE_PATTERN = 
+      Pattern.compile("UNSUBSCRIBE.*", Pattern.DOTALL);
+  private static final Pattern STOMP_ERROR_PATTERN = 
+      Pattern.compile("ERROR.*", Pattern.DOTALL);
   private static final Pattern STOMP_DISCONNECT_PATTERN 
       = Pattern.compile("DISCONNECT.*", Pattern.DOTALL);
   private static final String STOMP_CONNECTED_MESSAGE = 
@@ -126,6 +130,8 @@ public class StompFluxClientTest {
         .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
         .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
         .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
+        .thenExpectMessage(STOMP_ERROR_PATTERN)
+        .thenExpectMessage(STOMP_UNSUBSCRIBE_PATTERN)
         .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
         .thenSend(STOMP_RECEIPT_MESSAGE)
         .thenExpectClose()
@@ -138,6 +144,8 @@ public class StompFluxClientTest {
         .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
         .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
         .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
+        .thenExpectMessage(STOMP_ERROR_PATTERN)
+        .thenExpectMessage(STOMP_UNSUBSCRIBE_PATTERN)
         .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
         .thenSend(STOMP_RECEIPT_MESSAGE)
         .thenExpectClose()
@@ -150,6 +158,8 @@ public class StompFluxClientTest {
         .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
         .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
         .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
+        .thenExpectMessage(STOMP_ERROR_PATTERN)
+        .thenExpectMessage(STOMP_UNSUBSCRIBE_PATTERN)
         .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
         .thenSend(STOMP_RECEIPT_MESSAGE)
         .thenExpectClose()
@@ -168,14 +178,7 @@ public class StompFluxClientTest {
           mockServer.start();          
           return Mono.delay(Duration.ofMillis(500)).then();
         }))
-        .doAfterSessionClose(Mono.defer(() -> {
-          try {
-            mockServer.shutdown();
-          } catch (IOException ex) {
-            throw new IllegalStateException("Unable to shutdown server", ex);
-          }
-          return Mono.delay(Duration.ofMillis(500)).then();
-        }))
+        .doAfterSessionClose(Mono.defer(() -> shutdown(mockServer)))
         .build();
 
     Flux<String> output = stompClient.subscribe(
@@ -184,6 +187,6 @@ public class StompFluxClientTest {
     StepVerifier.create(output)
         .consumeSubscriptionWith(sub -> subscription = sub)        
         .expectErrorMessage("Max retries exceeded")
-        .verify(Duration.ofSeconds(30));
+        .verify(Duration.ofMinutes(30));
   }
 }

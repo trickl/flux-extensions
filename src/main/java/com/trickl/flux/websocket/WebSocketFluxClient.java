@@ -48,7 +48,7 @@ public class WebSocketFluxClient<T> {
   public Flux<T> get(Publisher<T> send) {
     return Flux.<T, SessionContext<T>>usingWhen(
         openSession(send).log("websocketsession", Level.FINER),
-        context -> Flux.from(context.getReceivePublisher()).log("receivePublisher"),
+        context -> Flux.from(context.getReceivePublisher()).log("receivePublisher", Level.FINE),
         context -> {
           log.info("Disposing of connection");
           return doBeforeClose.log("do before close", Level.FINER)
