@@ -2,6 +2,7 @@ package com.trickl.flux.websocket;
 
 import java.net.URI;
 import java.util.function.BiFunction;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.logging.Level;
 import lombok.Builder;
@@ -31,13 +32,14 @@ public class WebSocketFluxClient<T> {
   @Builder.Default private Mono<HttpHeaders> webSocketHeadersProvider
       = Mono.fromSupplier(HttpHeaders::new);
 
-  @Builder.Default private Mono<Void> doBeforeSessionOpen = Mono.empty();
+  @Builder.Default private Mono<Void> doBeforeOpen = Mono.empty();
 
   @Builder.Default private Mono<Void> doAfterOpen = Mono.empty();
 
-  @Builder.Default private Mono<Void> doBeforeClose = Mono.empty();
+  @Builder.Default private Function<Publisher<T>, Mono<Void>> doBeforeClose 
+      = response -> Mono.empty();
 
-  @Builder.Default private Mono<Void> doAfterSessionClose = Mono.empty();
+  @Builder.Default private Mono<Void> doAfterClose = Mono.empty();
 
   /**
    * Get a flux of messages from the stream.
@@ -51,9 +53,10 @@ public class WebSocketFluxClient<T> {
         context -> Flux.from(context.getReceivePublisher()).log("receivePublisher", Level.FINE),
         context -> {
           log.info("Disposing of connection");
-          return doBeforeClose.log("do before close", Level.FINER)
+          return doBeforeClose.apply(context.getReceivePublisher())
+              .log("do before close", Level.FINER)
               .then(closeSession(context)).log("cleanup-session");
-        }).log("binarywebsocketfluxclient", Level.FINER);
+        }).log("binarywebsocketfluxclient", Level.INFO);
   }
 
   protected Mono<SessionContext<T>> openSession(Publisher<T> send) {  
@@ -84,7 +87,7 @@ public class WebSocketFluxClient<T> {
         })
         .log("Connection", Level.FINER);
 
-    return doBeforeSessionOpen.then(Mono.<SessionContext<T>, Disposable>using(
+    return doBeforeOpen.then(Mono.<SessionContext<T>, Disposable>using(
         openSocket::subscribe,
         subscription -> sessionProcessor.flatMap(
           webSocketSession -> doAfterOpen.then(Mono.just(
@@ -100,7 +103,7 @@ public class WebSocketFluxClient<T> {
           context.getSubscription().dispose();
           sink.success();             
         }))
-        .then(doAfterSessionClose.log("after-session-close", Level.FINER)
+        .then(doAfterClose.log("after-session-close", Level.FINER)
         ).log("closeSession", Level.FINER);
   }
 

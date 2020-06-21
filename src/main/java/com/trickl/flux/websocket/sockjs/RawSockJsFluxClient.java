@@ -35,10 +35,10 @@ public class RawSockJsFluxClient {
       = Mono.fromSupplier(HttpHeaders::new);
 
   @Builder.Default
-  private Mono<Void> doBeforeSessionOpen = Mono.empty();
+  private Mono<Void> doBeforeOpen = Mono.empty();
 
   @Builder.Default
-  private Mono<Void> doAfterSessionClose = Mono.empty();
+  private Mono<Void> doAfterClose = Mono.empty();
 
   /**
    * Connect to a sockjs service.
@@ -58,8 +58,8 @@ public class RawSockJsFluxClient {
             .transportUriProvider(() -> sockJsUrlInfo.getTransportUrl(TransportType.WEBSOCKET))
             .handlerFactory(TextWebSocketHandler::new)
             .webSocketHeadersProvider(webSocketHeadersProvider)
-            .doBeforeSessionOpen(doBeforeSessionOpen)
-            .doAfterSessionClose(doAfterSessionClose)
+            .doBeforeOpen(doBeforeOpen)
+            .doAfterClose(doAfterClose)
             .build();
 
     return sockJsInputTransformer.apply(

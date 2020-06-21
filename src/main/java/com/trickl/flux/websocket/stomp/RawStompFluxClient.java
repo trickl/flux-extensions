@@ -4,6 +4,7 @@ import com.trickl.flux.websocket.BinaryWebSocketHandler;
 import com.trickl.flux.websocket.WebSocketFluxClient;
 import java.net.URI;
 import java.time.Duration;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.logging.Level;
 import lombok.Builder;
@@ -24,16 +25,16 @@ public class RawStompFluxClient {
   @Builder.Default private Duration disconnectReceiptTimeout = Duration.ofMillis(500);
 
   @Builder.Default
-  private Mono<Void> doBeforeSessionOpen = Mono.empty();
+  private Mono<Void> doBeforeOpen = Mono.empty();
 
   @Builder.Default
   private Mono<Void>  doAfterOpen = Mono.empty();
 
   @Builder.Default
-  private Mono<Void> doBeforeClose = Mono.empty();
+  private Function<Publisher<StompFrame>, Mono<Void>> doBeforeClose = response -> Mono.empty();
 
   @Builder.Default
-  private Mono<Void> doAfterSessionClose = Mono.empty();
+  private Mono<Void> doAfterClose = Mono.empty();
 
   /**
    * Connect to a stomp service.
@@ -51,10 +52,12 @@ public class RawStompFluxClient {
             .transportUriProvider(transportUriProvider)
             .handlerFactory(BinaryWebSocketHandler::new)
             .webSocketHeadersProvider(webSocketHeadersProvider)
-            .doBeforeSessionOpen(doBeforeSessionOpen)
+            .doBeforeOpen(doBeforeOpen)
             .doAfterOpen(doAfterOpen)
-            .doBeforeClose(doBeforeClose)
-            .doAfterSessionClose(doAfterSessionClose)
+            .doBeforeClose(response -> 
+               doBeforeClose.apply(stompInputTransformer.apply(response))
+            )
+            .doAfterClose(doAfterClose)
             .build();
 
     return stompInputTransformer
