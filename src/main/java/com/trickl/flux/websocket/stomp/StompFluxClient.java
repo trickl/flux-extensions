@@ -84,14 +84,12 @@ public class StompFluxClient {
     EmitterProcessor<Duration> connectionExpectationProcessor = EmitterProcessor.create();
     FluxSink<Duration> connectionExpectationSink = connectionExpectationProcessor.sink();
     
-    EmitterProcessor<StompFrame> responseProcessor = EmitterProcessor.create();
     EmitterProcessor<StompFrame> streamRequestProcessor = EmitterProcessor.create();
     FluxSink<StompFrame> streamRequestSink = streamRequestProcessor.sink();
 
     return new ResponseContext(
       connectionExpectationProcessor, 
       connectionExpectationSink,
-      responseProcessor,
       streamRequestProcessor.log("streamRequest"),
       streamRequestSink);
   }
@@ -117,8 +115,7 @@ public class StompFluxClient {
   protected Flux<BaseStreamContext> getBaseStreamContext(ResponseContext context) {
     log.info("Creating base stream context");
     Publisher<StompFrame> sendWithResponse = Flux.merge(
-        Flux.from(context.getStreamRequestProcessor()), 
-        Flux.from(context.getResponseProcessor()))
+        Flux.from(context.getStreamRequestProcessor()))
         .onErrorMap(new WarnOnErrorMapper())
         .log("sendWithResponse", Level.FINE);
 
@@ -492,8 +489,6 @@ public class StompFluxClient {
 
     protected final FluxSink<Duration> connectionExpectationSink;
     
-    protected final Publisher<StompFrame> responseProcessor;
-
     protected final Publisher<StompFrame> streamRequestProcessor;
 
     protected final FluxSink<StompFrame> streamRequestSink;
