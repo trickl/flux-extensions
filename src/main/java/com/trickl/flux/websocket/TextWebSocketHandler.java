@@ -26,7 +26,7 @@ public class TextWebSocketHandler implements WebSocketHandler {
     Mono<Void> output =
         session.send(Flux.from(send).map(message -> createMessage(session, message)));
 
-    return Mono.zip(input, output).doFinally(signal -> receive.complete()).then(session.close());
+    return Mono.zip(input, output).then(session.close());
   }
 
   protected WebSocketMessage createMessage(WebSocketSession session, String message) {

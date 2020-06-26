@@ -56,7 +56,7 @@ public class WebSocketFluxClient<T> {
           return doBeforeClose.apply(context.getReceivePublisher())
               .log("do before close", Level.FINER)
               .then(closeSession(context)).log("cleanup-session");
-        }).log("binarywebsocketfluxclient", Level.INFO);
+        }).log("websocketfluxclient", Level.INFO);
   }
 
   protected Mono<SessionContext<T>> openSession(Publisher<T> send) {  
