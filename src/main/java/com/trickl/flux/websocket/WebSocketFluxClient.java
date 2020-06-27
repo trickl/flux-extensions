@@ -34,7 +34,8 @@ public class WebSocketFluxClient<T> {
 
   @Builder.Default private Mono<Void> doBeforeOpen = Mono.empty();
 
-  @Builder.Default private Mono<Void> doAfterOpen = Mono.empty();
+  @Builder.Default private Function<FluxSink<T>, Mono<Void>> doAfterOpen
+      = response -> Mono.empty();
 
   @Builder.Default private Function<Publisher<T>, Mono<Void>> doBeforeClose 
       = response -> Mono.empty();
@@ -64,12 +65,14 @@ public class WebSocketFluxClient<T> {
     FluxSink<WebSocketSession> sessionSink = sessionProcessor.sink();
     EmitterProcessor<T> receiveProcessor = EmitterProcessor.create();
     FluxSink<T> receiveSink = receiveProcessor.sink();
+    EmitterProcessor<T> openProcessor = EmitterProcessor.create();
+    FluxSink<T> openSink = openProcessor.sink();
     
     Mono<Void> openSocket = webSocketHeadersProvider
         .<Void>flatMap(
             headers -> {
               WebSocketHandler dataHandler = handlerFactory.apply(
-                  receiveSink, send);
+                  receiveSink, Flux.merge(send, openProcessor.log("openProcessor")));
               SessionHandler sessionHandler =
                   new SessionHandler(
                       dataHandler, sessionSink);
@@ -90,7 +93,7 @@ public class WebSocketFluxClient<T> {
     return doBeforeOpen.then(Mono.<SessionContext<T>, Disposable>using(
         openSocket::subscribe,
         subscription -> sessionProcessor.flatMap(
-          webSocketSession -> doAfterOpen.then(Mono.just(
+          webSocketSession -> doAfterOpen.apply(openSink).then(Mono.just(
             new SessionContext<T>(webSocketSession, receiveProcessor, subscription)))).next(),
         subscription -> 
           log.info("Socket opened.")          

@@ -1,5 +1,6 @@
 package com.trickl.flux.websocket.stomp;
 
+import com.trickl.flux.mappers.FluxSinkMapper;
 import com.trickl.flux.websocket.BinaryWebSocketHandler;
 import com.trickl.flux.websocket.WebSocketFluxClient;
 import java.net.URI;
@@ -12,6 +13,7 @@ import org.reactivestreams.Publisher;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.reactive.socket.client.WebSocketClient;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
 
 @Builder
@@ -27,14 +29,16 @@ public class RawStompFluxClient {
   @Builder.Default
   private Mono<Void> doBeforeOpen = Mono.empty();
 
-  @Builder.Default
-  private Mono<Void>  doAfterOpen = Mono.empty();
+  @Builder.Default private Function<FluxSink<StompFrame>, Mono<Void>> doAfterOpen
+      = response -> Mono.empty();
 
   @Builder.Default
   private Function<Publisher<StompFrame>, Mono<Void>> doBeforeClose = response -> Mono.empty();
 
   @Builder.Default
   private Mono<Void> doAfterClose = Mono.empty();
+
+  private final StompMessageCodec codec = new StompMessageCodec();
 
   /**
    * Connect to a stomp service.
@@ -53,7 +57,8 @@ public class RawStompFluxClient {
             .handlerFactory(BinaryWebSocketHandler::new)
             .webSocketHeadersProvider(webSocketHeadersProvider)
             .doBeforeOpen(doBeforeOpen)
-            .doAfterOpen(doAfterOpen)
+            .doAfterOpen(sink -> doAfterOpen.apply(
+                new FluxSinkMapper<StompFrame, byte[]>(sink, codec::encode)))
             .doBeforeClose(response -> 
                doBeforeClose.apply(stompInputTransformer.apply(response))
             )

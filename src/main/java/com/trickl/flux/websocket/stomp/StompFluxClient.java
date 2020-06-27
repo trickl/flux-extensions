@@ -94,23 +94,27 @@ public class StompFluxClient {
     return Flux.switchOnNext(mergedPublishers);
   }
 
-  protected ResponseContext createResponseContext(Publisher<Long> beforeOpenSignal) {
+  protected ResponseContext createResponseContext() {
     log.info("Creating response context");
+    EmitterProcessor<Long> beforeOpenSignalEmitter = EmitterProcessor.create();
+    FluxSink<Long> beforeOpenSignalSink = beforeOpenSignalEmitter.sink();
+
     FluxSinkRef<Duration> connectionExpectationSinkRef = new FluxSinkRef<>();
     FluxSinkRef<StompFrame> streamRequestSinkRef = new FluxSinkRef<>();
 
     Flux<Duration> connectionExpectationFlux
         = createSwitchablePublisherAndSink(
-          beforeOpenSignal, connectionExpectationSinkRef, "connectionExpectation").share();
+          beforeOpenSignalEmitter, connectionExpectationSinkRef, "connectionExpectation");
     Disposable connectionSubscription = connectionExpectationFlux.subscribe();
 
     Flux<StompFrame> streamRequestFlux
         = createSwitchablePublisherAndSink(
-          beforeOpenSignal, streamRequestSinkRef, "streamRequest").share().cache(1)
+          beforeOpenSignalEmitter, streamRequestSinkRef, "streamRequest").share()
         .log("streamRequest");
     Disposable streamRequestSubscription = streamRequestFlux.subscribe();
 
     return new ResponseContext(
+      beforeOpenSignalSink,
       connectionExpectationFlux, 
       connectionExpectationSinkRef,
       connectionSubscription,
@@ -120,13 +124,11 @@ public class StompFluxClient {
   }
 
   protected Flux<BaseStreamContext> getBaseStreamContext() {
-    EmitterProcessor<Long> beforeOpenSignalEmitter = EmitterProcessor.create();
-    FluxSink<Long> beforeOpenSignalSink = beforeOpenSignalEmitter.sink();
-    ResponseContext responseContext = createResponseContext(
-        beforeOpenSignalEmitter.log("beforeOpenSignal"));
     return Flux.<BaseStreamContext, ResponseContext>usingWhen(
-      Mono.just(responseContext),
-      context -> getBaseStreamContext(context, beforeOpenSignalSink),
+      Mono.fromSupplier(() -> {        
+        return createResponseContext();
+      }),
+      context -> getBaseStreamContext(context),
       context -> {
         log.info("Cleaning up response context");   
         return Mono.create(sink -> {
@@ -144,7 +146,7 @@ public class StompFluxClient {
   }
 
   protected Flux<BaseStreamContext> getBaseStreamContext(
-      ResponseContext context, FluxSink<Long> beforeOpenSinkSink) {
+      ResponseContext context) {
     log.info("Creating base stream context");
     Publisher<StompFrame> sendWithResponse = Flux.merge(
         Flux.from(context.getStreamRequestProcessor()))
@@ -159,10 +161,10 @@ public class StompFluxClient {
             .heartbeatSendFrequency(heartbeatSendFrequency)
             .heartbeatReceiveFrequency(heartbeatReceiveFrequency)
             .doBeforeOpen(doBeforeSessionOpen.then(Mono.fromRunnable(() -> {
-              beforeOpenSinkSink.next(1L);
+              context.getBeforeOpenSignalSink().next(1L);
             })))
-            .doAfterOpen(connect(
-              context.getStreamRequestSinkRef(),
+            .doAfterOpen(sink -> connect(
+              sink,
               context.getConnectionExpectationSinkRef()))
             .doBeforeClose(pub -> Mono.delay(Duration.ofMillis(500)).then())
             .doAfterClose(doAfterSessionClose)
@@ -288,7 +290,7 @@ public class StompFluxClient {
 
 
   protected Mono<Void> connect(
-      FluxSinkRef<StompFrame> streamRequestSinkRef,
+      FluxSink<StompFrame> streamRequestSink,
       FluxSinkRef<Duration> connectionExpectationSinkRef) {
     return Mono.defer(() -> {
       log.info("Sending connect frame after connection");
@@ -299,7 +301,7 @@ public class StompFluxClient {
               .heartbeatReceiveFrequency(heartbeatReceiveFrequency)
               .host(transportUriProvider.get().getHost())
               .build();
-      streamRequestSinkRef.getSink().next(connectFrame);
+      streamRequestSink.next(connectFrame);
       connectionExpectationSinkRef.getSink().next(connectionTimeout);
 
       return Mono.empty();
@@ -524,6 +526,8 @@ public class StompFluxClient {
 
   @Value
   private static class ResponseContext {
+    protected final FluxSink<Long> beforeOpenSignalSink;
+
     protected final Publisher<Duration> connectionExpectationProcessor;
 
     protected final FluxSinkRef<Duration> connectionExpectationSinkRef;
