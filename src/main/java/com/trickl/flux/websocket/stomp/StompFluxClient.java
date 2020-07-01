@@ -27,6 +27,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.logging.Level;
 import lombok.Builder;
@@ -41,6 +42,7 @@ import reactor.core.publisher.EmitterProcessor;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.UnicastProcessor;
 
 @Log
 @Builder
@@ -76,17 +78,12 @@ public class StompFluxClient {
 
   private static final double HEARTBEAT_PERCENTAGE_TOLERANCE = 1.5;
 
-  protected Mono<Void> disconnectStream(SharedStreamContext context) {
-    context.getHeartbeatExpectationSink().complete();
-    return Mono.empty();
-  }
-
   protected <T> Flux<T> createSwitchablePublisherAndSink(
-      Publisher<Long> beforeOpenSignal, FluxSinkRef<T> sinkRef, String name) {
+      Publisher<?> beforeOpenSignal, FluxSinkRef<T> sinkRef, String name) {
     log.info("Calling switchable publisher and sink for " + name);
     Flux<Publisher<T>> mergedPublishers = Flux.from(beforeOpenSignal).map(signal -> {
       log.info("Creating switchable publisher and sink " + name);
-      EmitterProcessor<T> nextEmitter =  EmitterProcessor.<T>create();
+      UnicastProcessor<T> nextEmitter =  UnicastProcessor.<T>create();
       sinkRef.setSink(nextEmitter.sink());
       return nextEmitter;
     });
@@ -113,22 +110,111 @@ public class StompFluxClient {
         .log("streamRequest");
     Disposable streamRequestSubscription = streamRequestFlux.subscribe();
 
+    EmitterProcessor<Long> connectedSignalEmitter = EmitterProcessor.create();
+    FluxSink<Long> connectedSignalSink = connectedSignalEmitter.sink();
+
+    FluxSinkRef<Duration> heartbeatExpectationSinkRef = new FluxSinkRef<>();
+    FluxSinkRef<Duration> heartbeatSendSinkRef = new FluxSinkRef<>();
+
+    Flux<Duration> heartbeatExpectationFlux
+        = createSwitchablePublisherAndSink(
+          connectedSignalEmitter, heartbeatExpectationSinkRef, "heartbeatExpectation")
+          .log("heartbeatExpectation");
+    Disposable heartbeatExpectationSubscription = heartbeatExpectationFlux.subscribe();
+
+    Flux<Duration> heartbeatSendFlux
+        = createSwitchablePublisherAndSink(
+          connectedSignalEmitter, heartbeatSendSinkRef, "heartbeatSend").log("heartbeatSend");
+    Disposable heartbeatSendSubscription = heartbeatSendFlux.subscribe();
+
+    EmitterProcessor<Long> requireReceiptSignalEmitter = EmitterProcessor.create();
+    FluxSink<Long> requireReceiptSignalSink = requireReceiptSignalEmitter.sink();
+
+    FluxSinkRef<Duration> receiptExpectationSinkRef = new FluxSinkRef<>();
+    Flux<Duration> receiptExpectationFlux
+        = createSwitchablePublisherAndSink(
+          requireReceiptSignalEmitter, receiptExpectationSinkRef, "receiptExpectation");
+    Disposable receiptSubscription = receiptExpectationFlux.subscribe();
+
     return new ResponseContext(
       beforeOpenSignalSink,
+      connectedSignalSink,
+      requireReceiptSignalSink,
       connectionExpectationFlux, 
       connectionExpectationSinkRef,
       connectionSubscription,
       streamRequestFlux,
       streamRequestSinkRef,
-      streamRequestSubscription);
+      streamRequestSubscription,
+      heartbeatExpectationFlux,
+      heartbeatExpectationSinkRef,
+      heartbeatExpectationSubscription,
+      heartbeatSendFlux,
+      heartbeatSendSinkRef,
+      heartbeatSendSubscription,
+      receiptExpectationFlux, 
+      receiptExpectationSinkRef,
+      receiptSubscription);
   }
 
-  protected Flux<BaseStreamContext> getBaseStreamContext() {
-    return Flux.<BaseStreamContext, ResponseContext>usingWhen(
-      Mono.fromSupplier(() -> {        
-        return createResponseContext();
-      }),
-      context -> getBaseStreamContext(context),
+  protected BaseStreamContext createBaseStreamContext(
+      ResponseContext responseContext,
+      Flux<StompFrame> source,
+      StompConnectedFrame connectedFrame) {
+    log.info("Creating base stream context");
+
+    return new BaseStreamContext(
+      responseContext,
+      connectedFrame.getHeartbeatSendFrequency(),
+      connectedFrame.getHeartbeatReceiveFrequency(),
+      source
+    );
+  }
+
+  protected SharedStreamContext createSharedStreamContext(BaseStreamContext context,
+      Consumer<FluxSinkRef<StompFrame>>  doAfterSharedSubscribe) {
+    log.info("Creating shared stream context");
+    
+    Flux<StompFrame> sharedStream = context.getStream()        
+        .onErrorContinue(JsonProcessingException.class, this::warnAndDropError)
+        .onErrorMap(new WarnOnErrorMapper())
+        .doOnSubscribe(sub -> {
+          resubscribeAll(context.getResponseContext().getStreamRequestSinkRef());
+
+          doAfterSharedSubscribe.accept(context.getResponseContext().getStreamRequestSinkRef());
+        })
+        .doOnSubscribe(sub -> {
+          if (!context.getHeartbeatReceiveFrequency().isZero()) {
+            Duration heartbeatExpectation = 
+                context.getHeartbeatReceiveFrequency().plus(
+                  context.getHeartbeatReceiveFrequency()
+                    .multipliedBy((long) (HEARTBEAT_PERCENTAGE_TOLERANCE * 100))
+                    .dividedBy(100));
+            expectHeartbeatsEvery(
+                context.getResponseContext().getHeartbeatExpectationSinkRef(),
+                heartbeatExpectation);
+          }
+
+          sendHeartbeatsEvery(
+              context.getResponseContext().getHeartbeatSendFrequencySinkRef(),
+              context.getHeartbeatSendFrequency());
+        })
+        .doOnError(error -> sendErrorFrame(error,
+           context.getResponseContext().getStreamRequestSinkRef()))
+        .retryWhen(new ExponentialBackoffRetry(
+          initialRetryDelay, retryConsiderationPeriod, maxRetries))
+        .share()
+        .log("sharedStream", Level.INFO);
+
+    log.info("Returning SharedStreamContext.");
+    return new SharedStreamContext(context, sharedStream);
+  }
+
+  protected Flux<SharedStreamContext> getSharedStreamContext(
+      Consumer<FluxSinkRef<StompFrame>> doAfterSharedSubscribe) {
+    return Flux.<SharedStreamContext, ResponseContext>usingWhen(
+      Mono.fromSupplier(this::createResponseContext),
+      context -> getSharedStreamContext(context, doAfterSharedSubscribe), 
       context -> {
         log.info("Cleaning up response context");   
         return Mono.create(sink -> {
@@ -136,6 +222,10 @@ public class StompFluxClient {
           context.getStreamRequestSinkRef().getSink().complete();
           context.getConnectionExpectationSubscription().dispose();
           context.getStreamRequestSubscription().dispose();
+          context.getHeartbeatExpectationSinkRef().getSink().complete();
+          context.getHeartbeatSendFrequencySinkRef().getSink().complete();
+          context.getHeartbeatExpectationSubscription().dispose();
+          context.getHeartbeatSendFrequencySubscription().dispose();
           sink.success();
         });
       }
@@ -145,9 +235,9 @@ public class StompFluxClient {
     .log("baseStreamContext");    
   }
 
-  protected Flux<BaseStreamContext> getBaseStreamContext(
-      ResponseContext context) {
-    log.info("Creating base stream context");
+  protected Flux<SharedStreamContext> getSharedStreamContext(
+      ResponseContext context, Consumer<FluxSinkRef<StompFrame>> doAfterSharedSubscribe) {
+    log.info("Creating base stream context mono");
     Publisher<StompFrame> sendWithResponse = Flux.merge(
         Flux.from(context.getStreamRequestProcessor()))
         .onErrorMap(new WarnOnErrorMapper())
@@ -160,9 +250,9 @@ public class StompFluxClient {
             .webSocketHeadersProvider(Mono.fromSupplier(webSocketHeadersProvider))
             .heartbeatSendFrequency(heartbeatSendFrequency)
             .heartbeatReceiveFrequency(heartbeatReceiveFrequency)
-            .doBeforeOpen(doBeforeSessionOpen.then(Mono.fromRunnable(() -> {
-              context.getBeforeOpenSignalSink().next(1L);
-            })))
+            .doBeforeOpen(doBeforeSessionOpen.then(Mono.fromRunnable(() -> 
+              context.getBeforeOpenSignalSink().next(1L)
+            )))
             .doAfterOpen(sink -> connect(
               sink,
               context.getConnectionExpectationSinkRef()))
@@ -175,81 +265,56 @@ public class StompFluxClient {
               this::handleErrorFrame)) 
           .share()
           .log("base", Level.INFO);
-    
+
     Flux<StompConnectedFrame> connected = base.filter(
         frame -> StompConnectedFrame.class.equals(frame.getClass()))
-        .mergeWith(Flux.defer(() -> createConnectionExpectation(
-            context.getConnectionExpectationProcessor(), base)
-            ))
-        .cast(StompConnectedFrame.class)        
+        .cast(StompConnectedFrame.class)
         .log("connection", Level.INFO);
 
-    return Flux.<BaseStreamContext, StompConnectedFrame>usingWhen(
-      connected,
-      connectedFrame -> Flux.create(sink -> 
-        sink.next(new BaseStreamContext(connectedFrame, base, context.getStreamRequestSinkRef()))
-      ),
-      connectedFrame -> {
-        log.info("No longer connected.");
-        return Mono.empty();
-      }
-    );    
+    Flux<StompFrame> heartbeats = Flux.from(
+        context.getHeartbeatSendFrequencyProcessor())
+        .<StompFrame>switchMap(
+          frequency -> sendHeartbeats(frequency, 
+          context.getStreamRequestSinkRef()))
+        .log("heartbeats");
+    Flux<StompFrame> heartbeatExpectation = Flux.defer(() -> createHeartbeatExpectation(
+        context.getHeartbeatExpectationProcessor(), base));
+
+    Flux<StompConnectedFrame> heartbeatExpectations = 
+         heartbeatExpectation.mergeWith(heartbeats).cast(StompConnectedFrame.class);
+
+    Flux<StompConnectedFrame> requireReceiptExpectation = Flux.defer(() -> createReceiptExpectation(
+        context.getReceiptExpectationProcessor(), base)).cast(StompConnectedFrame.class);
+        
+    Flux<StompConnectedFrame> connectedWithExpectations = connected
+        .mergeWith(Flux.defer(() -> createConnectionExpectation(
+        context.getConnectionExpectationProcessor(), connected)
+        ))
+        .mergeWith(heartbeatExpectations)
+        .mergeWith(requireReceiptExpectation);
+
+    return connectedWithExpectations.flatMap(connectedFrame -> {
+      return Flux.<SharedStreamContext, BaseStreamContext>usingWhen(
+          Mono.fromSupplier(() -> 
+              createBaseStreamContext(context, base, connectedFrame)),
+        baseStreamContext -> Flux.<SharedStreamContext>create(sink -> {          
+          sink.next(createSharedStreamContext(baseStreamContext, doAfterSharedSubscribe));
+        })
+        .doOnSubscribe(sub -> {
+          baseStreamContext.getResponseContext().getConnectedSignalSink().next(1L);
+        }).log("SharedStreamContext"),
+        baseStreamContext -> {
+          log.info("Cleaning up baseStreamContext");
+          baseStreamContext.getResponseContext().getRequireReceiptSignalSink().next(1L);
+          return disconnect(baseStreamContext.getStream(),          
+          baseStreamContext.getResponseContext().getStreamRequestSinkRef(),
+          baseStreamContext.getResponseContext().getReceiptExpectationSinkRef());  
+        }
+      )
+      .log("baseStreamContext(2)", Level.INFO);
+    });
   }
   
-  protected Flux<SharedStreamContext> connectStream() {
-    return getBaseStreamContext().flatMap(baseStreamContext -> 
-      usingConnectStream(baseStreamContext).log("connectStream")   
-    );
-  }
-
-  protected Flux<SharedStreamContext> usingConnectStream(BaseStreamContext baseStreamContext) {
-    return Flux.<SharedStreamContext, BaseStreamContext>usingWhen(
-        Mono.just(baseStreamContext),
-        context -> Flux.create(sink -> sink.next(connectStreamImpl(context))),
-        context -> {
-          log.info("Cleaning up connection");
-          return disconnect(context.getBase(), context.getStreamRequestSinkRef());
-        }
-      );
-  }
-
-  protected SharedStreamContext connectStreamImpl(BaseStreamContext context) {
-    log.info("Creating shared stream context");
-    EmitterProcessor<Duration> heartbeatSendProcessor = EmitterProcessor.create();
-    Flux<StompFrame> heartbeats = heartbeatSendProcessor.switchMap(
-        frequency -> sendHeartbeats(frequency, context.getStreamRequestSinkRef()));
-    FluxSink<Duration> heartbeatSendSink = heartbeatSendProcessor.sink();
-
-    EmitterProcessor<Duration> heartbeatExpectationProcessor = EmitterProcessor.create();
-    FluxSink<Duration> heartbeatExpectationSink = heartbeatExpectationProcessor.sink();
-
-    log.info("Handling stream connected.");
-    handleStreamConnected(
-        context.getConnectedFrame().getHeartbeatSendFrequency(),
-        context.getConnectedFrame().getHeartbeatReceiveFrequency(),
-        heartbeatExpectationSink,
-        context.getStreamRequestSinkRef(),
-        heartbeatSendSink);
-
-    Flux<StompFrame> sharedStream = context.getBase()                  
-        .mergeWith(Flux.defer(() -> createHeartbeatExpectation(
-            heartbeatExpectationProcessor, context.getBase())))
-        .mergeWith(heartbeats)   
-        .onErrorContinue(JsonProcessingException.class, this::warnAndDropError)
-        .onErrorMap(new WarnOnErrorMapper())
-        .doOnError(error -> sendErrorFrame(error, context.getStreamRequestSinkRef()))
-        .retryWhen(new ExponentialBackoffRetry(
-          initialRetryDelay, retryConsiderationPeriod, maxRetries))
-        .share()
-        .log("sharedStream", Level.INFO);
-
-    log.info("Returning SharedStreamContext.");
-    return new SharedStreamContext(
-      sharedStream, 
-      context.getStreamRequestSinkRef(),
-      heartbeatExpectationSink);
-  }
-
   protected <T> Publisher<T> createConnectionExpectation(
       Publisher<Duration> connectionExpectationPublisher, Publisher<T> stream) {
     log.info("Creating connection expectation.");
@@ -270,25 +335,6 @@ public class StompFluxClient {
         .switchMap(period -> timeoutNoReceipt(period, stream));
   }
 
-  protected void handleStreamConnected(
-      Duration heartbeatSendFrequency,
-      Duration heartbeatReceiveFrequency,
-      FluxSink<Duration> heartbeatExpectationSink,
-      FluxSinkRef<StompFrame> streamRequestSinkRef,
-      FluxSink<Duration> heartbeatSendSink) {
-    if (!heartbeatSendFrequency.isZero()) {
-      Duration heartbeatExpectation = 
-          heartbeatSendFrequency.plus(
-            heartbeatSendFrequency
-              .multipliedBy((long) (HEARTBEAT_PERCENTAGE_TOLERANCE * 100))
-              .dividedBy(100));
-      expectHeartbeatsEvery(heartbeatExpectationSink, heartbeatExpectation);
-    }
-    sendHeartbeatsEvery(heartbeatReceiveFrequency, heartbeatSendSink);
-    resubscribeAll(streamRequestSinkRef);
-  }
-
-
   protected Mono<Void> connect(
       FluxSink<StompFrame> streamRequestSink,
       FluxSinkRef<Duration> connectionExpectationSinkRef) {
@@ -302,34 +348,30 @@ public class StompFluxClient {
               .host(transportUriProvider.get().getHost())
               .build();
       streamRequestSink.next(connectFrame);
-      connectionExpectationSinkRef.getSink().next(connectionTimeout);
+      expectConnectionWithin(connectionExpectationSinkRef.getSink(), connectionTimeout);
 
       return Mono.empty();
     });
   }
 
-  protected void disconnect(
-      FluxSinkRef<StompFrame> streamRequestSinkRef,
-      FluxSink<Duration> receiptExpectationSink) {
-    StompDisconnectFrame disconnectFrame = StompDisconnectFrame.builder().build();
-    log.info("Disconnecting...");
-    streamRequestSinkRef.getSink().next(disconnectFrame);
-    receiptExpectationSink.next(disconnectionReceiptTimeout);
-    receiptExpectationSink.complete();
-  }
-
   protected Mono<Void> disconnect(
       Publisher<StompFrame> response, 
-      FluxSinkRef<StompFrame> streamRequestSinkRef) {
-    EmitterProcessor<Duration> receiptExpectationProcessor = EmitterProcessor.create();
-    FluxSink<Duration> receiptExpectationSink = receiptExpectationProcessor.sink();
-    disconnect(streamRequestSinkRef, receiptExpectationSink);
+      FluxSinkRef<StompFrame> streamRequestSinkRef,
+      FluxSinkRef<Duration> receiptExpectationSinkRef) {
+    disconnect(streamRequestSinkRef, receiptExpectationSinkRef);
     
-    return Flux.from(response).filter(
-      frame -> StompReceiptFrame.class.equals(frame.getClass()))
-      .mergeWith(Flux.defer(() -> createReceiptExpectation(
-          receiptExpectationProcessor, response)))        
-    .cast(StompReceiptFrame.class).log("disconnect").then();
+    return Mono.from(Flux.from(response).filter(
+      frame -> StompReceiptFrame.class.equals(frame.getClass()))     
+    .cast(StompReceiptFrame.class).log("disconnect")).then();
+  }
+
+  protected void disconnect(
+      FluxSinkRef<StompFrame> streamRequestSinkRef,
+      FluxSinkRef<Duration> receiptExpectationSink) {
+    StompDisconnectFrame disconnectFrame = StompDisconnectFrame.builder().build();
+    log.info("Disconnecting...");
+    receiptExpectationSink.getSink().next(disconnectionReceiptTimeout);
+    streamRequestSinkRef.getSink().next(disconnectFrame);    
   }
 
   protected StompFrame handleErrorFrame(StompFrame frame) throws RemoteStreamException {
@@ -346,6 +388,7 @@ public class StompFluxClient {
 
   protected Publisher<StompHeartbeatFrame> sendHeartbeats(
       Duration frequency, FluxSinkRef<StompFrame> streamRequestSinkRef) {
+    log.info("Sending heartbeats every " + frequency.toString());
     if (frequency.isZero()) {
       return Flux.empty();
     }
@@ -355,8 +398,8 @@ public class StompFluxClient {
         .startWith(new StompHeartbeatFrame())
         .flatMap(heartbeat -> {
           streamRequestSinkRef.getSink().next(heartbeat);
-          return Mono.empty();
-        });
+          return Mono.<StompHeartbeatFrame>empty();
+        }).log("heartbeats", Level.INFO);
   }
 
   protected <T> Publisher<T> timeoutNoHeartbeat(Duration frequency, Publisher<T> stream) {
@@ -414,14 +457,16 @@ public class StompFluxClient {
       .ignoreElements();
   }
 
-  protected void sendHeartbeatsEvery(Duration frequency, FluxSink<Duration> heartbeatSendSink) {
-    log.info("Sending heartbeats every " + frequency.toString());
-    heartbeatSendSink.next(frequency);
+  protected void sendHeartbeatsEvery(
+      FluxSinkRef<Duration> heartbeatSendFrequencySink, Duration frequency) {
+    log.info("Request sending heartbeats every " + frequency.toString());
+    heartbeatSendFrequencySink.getSink().next(frequency);
   }
 
   protected void expectHeartbeatsEvery(
-      FluxSink<Duration> heartbeatExpectationSink, Duration frequency) {    
-    heartbeatExpectationSink.next(frequency);
+      FluxSinkRef<Duration> heartbeatExpectationSink, Duration frequency) {    
+    log.info("Expecting heartbeats every " + frequency.toString());
+    heartbeatExpectationSink.getSink().next(frequency);
   }
 
   protected void expectConnectionWithin(
@@ -439,6 +484,7 @@ public class StompFluxClient {
 
   protected String subscribeDestination(
       String destination, FluxSinkRef<StompFrame> streamRequestSinkRef) {
+    log.info("Subscribing to destination " + destination);
     int subscriptionNumber = maxSubscriptionNumber.getAndIncrement();
     String subscriptionId = MessageFormat.format("sub-{0}", subscriptionNumber);
     StompFrame frame =
@@ -451,6 +497,7 @@ public class StompFluxClient {
   }
 
   protected void resubscribeAll(FluxSinkRef<StompFrame> streamRequestSinkRef) {
+    log.info("Resubscribing to everything");
     subscriptionDestinationIdMap.replaceAll(
         (dest, id) -> subscribeDestination(dest, streamRequestSinkRef));
   }
@@ -464,13 +511,21 @@ public class StompFluxClient {
    */
   public <T> Flux<T> subscribe(
       String destination, Class<T> messageType, Duration minMessageFrequency) {
-    return connectStream().flatMap(sharedStreamContext -> 
+    // Drain the subscription only once
+    Consumer<FluxSinkRef<StompFrame>> doAfterSharedStreamSubscribe = sinkRef -> {
+      log.info("Subscribing to " + destination);
+      subscriptionDestinationIdMap.computeIfAbsent(destination, 
+          d -> subscribeDestination(d, sinkRef));      
+    };
+
+    return getSharedStreamContext(doAfterSharedStreamSubscribe)
+        .flatMap(sharedStreamContext -> 
       Flux.<T, SharedStreamContext>usingWhen(
-          Mono.just(sharedStreamContext),
+          Mono.fromSupplier(() -> sharedStreamContext),
           context -> subscribe(
             context, destination, messageType, minMessageFrequency)
               .log("sharedStreamContext", Level.INFO),
-          this::disconnectStream)
+          context -> Mono.empty())
     )    
     .onErrorMap(new WarnOnErrorMapper())
     .log("outerSubscribe", Level.INFO);
@@ -479,7 +534,7 @@ public class StompFluxClient {
   protected <T> Flux<T> subscribe(SharedStreamContext context, 
       String destination, Class<T> messageType, Duration minMessageFrequency) {    
     Flux<StompMessageFrame> messageFrameFlux =
-        context.getSource()
+        context.getSharedStream()
         .filter(frame -> frame instanceof StompMessageFrame)
         .cast(StompMessageFrame.class)
         .filter(frame -> frame.getDestination().equals(destination))
@@ -491,13 +546,9 @@ public class StompFluxClient {
               }
               return error;
             })
-        .doOnSubscribe(sub -> {
-          log.info("Subscribing to " + destination);
-          subscriptionDestinationIdMap.computeIfAbsent(destination, 
-              d -> subscribeDestination(d, context.getRequestSinkRef()));
-        })
         .onErrorMap(new WarnOnErrorMapper())
-        .doFinally(signal -> unsubscribe(destination, context.getRequestSinkRef()))
+        .doFinally(signal -> unsubscribe(destination, 
+          context.getBaseStreamContext().getResponseContext().getStreamRequestSinkRef()))
         .log("innerSubscribe", Level.INFO);
 
     return messageFrameFlux.flatMap(
@@ -528,6 +579,10 @@ public class StompFluxClient {
   private static class ResponseContext {
     protected final FluxSink<Long> beforeOpenSignalSink;
 
+    protected final FluxSink<Long> connectedSignalSink;
+
+    protected final FluxSink<Long> requireReceiptSignalSink;
+    
     protected final Publisher<Duration> connectionExpectationProcessor;
 
     protected final FluxSinkRef<Duration> connectionExpectationSinkRef;
@@ -539,23 +594,42 @@ public class StompFluxClient {
     protected final FluxSinkRef<StompFrame> streamRequestSinkRef;
 
     protected final Disposable streamRequestSubscription;
+
+    protected final Publisher<Duration> heartbeatExpectationProcessor;
+
+    protected final FluxSinkRef<Duration> heartbeatExpectationSinkRef;
+
+    protected final Disposable heartbeatExpectationSubscription;
+    
+    protected final Publisher<Duration> heartbeatSendFrequencyProcessor;
+
+    protected final FluxSinkRef<Duration> heartbeatSendFrequencySinkRef;
+
+    protected final Disposable heartbeatSendFrequencySubscription;
+
+    protected final Publisher<Duration> receiptExpectationProcessor;
+
+    protected final FluxSinkRef<Duration> receiptExpectationSinkRef;
+
+    protected final Disposable receiptExpectationSubscription;
   }
 
   @Value
   private static class BaseStreamContext {
-    protected final StompConnectedFrame connectedFrame;
+    protected final ResponseContext responseContext;
+    
 
-    protected final Flux<StompFrame> base;
+    protected final Duration heartbeatSendFrequency;
 
-    protected final FluxSinkRef<StompFrame> streamRequestSinkRef;
+    protected final Duration heartbeatReceiveFrequency;
+
+    protected final Flux<StompFrame> stream;
   }
 
   @Value
   private static class SharedStreamContext {
-    protected final Flux<StompFrame> source;
+    protected final BaseStreamContext baseStreamContext;
 
-    protected final FluxSinkRef<StompFrame> requestSinkRef;
-
-    protected final FluxSink<Duration> heartbeatExpectationSink;
+    protected final Flux<StompFrame> sharedStream;
   }
 }

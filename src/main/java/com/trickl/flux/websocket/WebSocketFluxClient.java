@@ -72,7 +72,7 @@ public class WebSocketFluxClient<T> {
         .<Void>flatMap(
             headers -> {
               WebSocketHandler dataHandler = handlerFactory.apply(
-                  receiveSink, Flux.merge(send, openProcessor.log("openProcessor")));
+                  receiveSink, Flux.merge(send, openProcessor));
               SessionHandler sessionHandler =
                   new SessionHandler(
                       dataHandler, sessionSink);
