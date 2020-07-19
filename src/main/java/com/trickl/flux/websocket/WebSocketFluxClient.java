@@ -51,7 +51,7 @@ public class WebSocketFluxClient<T> {
   public Flux<T> get(Publisher<T> send) {
     return Flux.<T, SessionContext<T>>usingWhen(
         openSession(send).log("websocketsession", Level.FINER),
-        context -> Flux.from(context.getReceivePublisher()).log("receivePublisher", Level.FINE),
+        context -> Flux.from(context.getReceivePublisher()).log("receivePublisher", Level.INFO),
         context -> {
           log.info("Disposing of connection");
           return doBeforeClose.apply(context.getReceivePublisher())
@@ -95,9 +95,9 @@ public class WebSocketFluxClient<T> {
         subscription -> sessionProcessor.flatMap(
           webSocketSession -> doAfterOpen.apply(openSink).then(Mono.just(
             new SessionContext<T>(webSocketSession, receiveProcessor, subscription)))).next(),
-        subscription -> 
-          log.info("Socket opened.")          
-        ));
+        subscription -> {
+          log.info("Socket opened.");
+        }));
   }
 
   protected Mono<Void> closeSession(SessionContext<T> context) {

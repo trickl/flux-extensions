@@ -60,8 +60,13 @@ public class SockJsFluxClient {
         .flatMap(new SockJsAbnormalCloseProcessor())
         .onErrorContinue(JsonProcessingException.class, this::warnAndDropError)
         .doOnTerminate(onTerminate)
-        .retryWhen(new ExponentialBackoffRetry(
-            initialRetryDelay, retryConsiderationPeriod, maxRetries))
+        .retryWhen(
+           ExponentialBackoffRetry.builder() 
+             .initialRetryDelay(initialRetryDelay)
+             .considerationPeriod(retryConsiderationPeriod)
+             .maxRetries(maxRetries)
+             .name("sockJsClient")
+             .build())
         .publishOn(Schedulers.parallel())
         .publish()
         .refCount();

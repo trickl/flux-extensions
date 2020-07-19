@@ -6,18 +6,19 @@ import java.util.List;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import lombok.RequiredArgsConstructor;
+import lombok.Builder;
 import lombok.extern.java.Log;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.util.function.Tuple2;
 
 @Log
-@RequiredArgsConstructor
+@Builder
 public class ExponentialBackoffRetry implements Function<Flux<Throwable>, Flux<Long>> {
-  final Duration initialRetryDelay;
-  final Duration considerationPeriod;
-  final int maxRetries;
+  @Builder.Default private Duration initialRetryDelay = Duration.ofSeconds(1);
+  @Builder.Default private Duration considerationPeriod = Duration.ofSeconds(32);
+  @Builder.Default private int maxRetries = 3;
+  @Builder.Default private String name = "default";
   
   @Override
   public Flux<Long> apply(Flux<Throwable> errorFlux) {
@@ -30,8 +31,8 @@ public class ExponentialBackoffRetry implements Function<Flux<Throwable>, Flux<L
             return Mono.error(new IllegalStateException("Max retries exceeded"));
           } else if (errorCount > 0) {
             Duration retryDelay = getExponentialRetryDelay(initialRetryDelay, errorCount);
-            log.info("Will retry after error in " + retryDelay);
-            return Mono.delay(retryDelay).doOnNext(x -> log.info("Retrying..."));
+            log.info(name + " - will retry after error in " + retryDelay);
+            return Mono.delay(retryDelay).doOnNext(x -> log.info(name + " - retrying..."));
           }
           return Mono.empty();
         });

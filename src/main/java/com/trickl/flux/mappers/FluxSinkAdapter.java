@@ -7,7 +7,7 @@ import reactor.core.publisher.FluxSink;
 import reactor.util.context.Context;
 
 @RequiredArgsConstructor
-public class FluxSinkMapper<T, S> implements FluxSink<T> {
+public class FluxSinkAdapter<T, S> implements FluxSink<T> {
 
   private final FluxSink<S> inner;
 

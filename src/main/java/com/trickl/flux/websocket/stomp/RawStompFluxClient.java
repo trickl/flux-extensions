@@ -1,6 +1,6 @@
 package com.trickl.flux.websocket.stomp;
 
-import com.trickl.flux.mappers.FluxSinkMapper;
+import com.trickl.flux.mappers.FluxSinkAdapter;
 import com.trickl.flux.websocket.BinaryWebSocketHandler;
 import com.trickl.flux.websocket.WebSocketFluxClient;
 import java.net.URI;
@@ -22,9 +22,6 @@ public class RawStompFluxClient {
   private final Supplier<URI> transportUriProvider;
   @Builder.Default private Mono<HttpHeaders> webSocketHeadersProvider
       = Mono.fromSupplier(HttpHeaders::new);
-  @Builder.Default private Duration heartbeatSendFrequency = Duration.ofSeconds(5);
-  @Builder.Default private Duration heartbeatReceiveFrequency = Duration.ofSeconds(5);
-  @Builder.Default private Duration disconnectReceiptTimeout = Duration.ofMillis(500);
 
   @Builder.Default
   private Mono<Void> doBeforeOpen = Mono.empty();
@@ -58,7 +55,7 @@ public class RawStompFluxClient {
             .webSocketHeadersProvider(webSocketHeadersProvider)
             .doBeforeOpen(doBeforeOpen)
             .doAfterOpen(sink -> doAfterOpen.apply(
-                new FluxSinkMapper<StompFrame, byte[]>(sink, codec::encode)))
+                new FluxSinkAdapter<StompFrame, byte[]>(sink, codec::encode)))
             .doBeforeClose(response -> 
                doBeforeClose.apply(stompInputTransformer.apply(response))
             )

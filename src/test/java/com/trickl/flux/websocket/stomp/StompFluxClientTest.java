@@ -5,7 +5,9 @@ import com.trickl.flux.config.WebSocketConfiguration;
 import com.trickl.flux.websocket.MockServerWithWebSocket;
 
 import java.io.IOException;
+import java.sql.Connection;
 import java.time.Duration;
+import java.util.logging.Level;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -122,16 +124,16 @@ public class StompFluxClientTest {
     MockServerWithWebSocket mockServer = new MockServerWithWebSocket();
 
     mockServer.beginVerifier()
-        .thenWaitServerStartThenUpgrade()
-        .thenExpectOpen()
-        .thenExpectMessage(STOMP_CONNECT_PATTERN)
+        .thenWaitServerStartThenUpgrade(Duration.ofMinutes(5))
+        .thenExpectOpen(Duration.ofMinutes(5))
+        .thenExpectMessage(STOMP_CONNECT_PATTERN, Duration.ofMinutes(5))
         .thenSend(STOMP_CONNECTED_MESSAGE)        
-        .thenExpectMessage(STOMP_SUBSCRIBE_PATTERN)
-        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
-        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
-        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
-        .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
-        .thenSend(STOMP_RECEIPT_MESSAGE)
+        .thenExpectMessage(STOMP_SUBSCRIBE_PATTERN, Duration.ofMinutes(5))
+        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN, Duration.ofMinutes(5))
+        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN, Duration.ofMinutes(5))
+        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN, Duration.ofMinutes(5))
+        //.thenExpectMessage(STOMP_DISCONNECT_PATTERN, Duration.ofMinutes(5))
+        //.thenSend(STOMP_RECEIPT_MESSAGE)
         .thenExpectClose()
         .thenWaitServerShutdown()
         .thenWaitServerStartThenUpgrade()
@@ -142,8 +144,8 @@ public class StompFluxClientTest {
         .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
         .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
         .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)     
-        .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
-        .thenSend(STOMP_RECEIPT_MESSAGE)
+        //.thenExpectMessage(STOMP_DISCONNECT_PATTERN)
+        //.thenSend(STOMP_RECEIPT_MESSAGE)
         .thenExpectClose()
         .thenWaitServerShutdown()
         .thenWaitServerStartThenUpgrade()    
@@ -154,8 +156,8 @@ public class StompFluxClientTest {
         .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
         .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
         .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
-        .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
-        .thenSend(STOMP_RECEIPT_MESSAGE)
+        //.thenExpectMessage(STOMP_DISCONNECT_PATTERN)
+        //.thenSend(STOMP_RECEIPT_MESSAGE)
         .thenExpectClose()
         .thenWaitServerShutdown()
         .thenVerify(); 
@@ -167,6 +169,8 @@ public class StompFluxClientTest {
         .transportUriProvider(mockServer::getWebSocketUri)
         .connectionTimeout(Duration.ofSeconds(15))
         .heartbeatReceiveFrequency(Duration.ofSeconds(3))
+        //.connectionTimeout(Duration.ofMinutes(5))
+        //.heartbeatReceiveFrequency(Duration.ofMinutes(5))
         .maxRetries(2)
         .doBeforeSessionOpen(Mono.defer(() -> {
           mockServer.start();          
@@ -182,5 +186,36 @@ public class StompFluxClientTest {
         .consumeSubscriptionWith(sub -> subscription = sub)        
         .expectErrorMessage("Max retries exceeded")
         .verify(Duration.ofMinutes(30));
+  }
+
+  @Test
+  public void testConnectionPrinciple() {
+    Flux<String> base = Flux.<String>create(sink -> {
+      sink.next("C");
+      sink.next("1");
+      sink.next("2");
+      sink.next("3");
+    }).log("base");
+    Flux<String> connected = base.filter("C"::equals)
+        .log("connection", Level.INFO);
+
+    Flux<String> connectedWithExpectation = connected
+        .mergeWith(Flux.just(1).delayElements(Duration.ofSeconds(1)).flatMap(trigger -> Flux.error(
+          new RuntimeException("Scheduled Error"))));
+
+
+    Flux<String> sharedBasePostConnection = connectedWithExpectation
+        .flatMap(connectedFrame -> {
+          return base.share().log("sharedBase");
+        }).log("sharedBasePostConnection");
+
+    Flux<String> filtered = sharedBasePostConnection.filter(value -> false)
+        .log("filtered");
+
+    Flux<String> merged = Flux.<String>empty().mergeWith(filtered).log("merged");
+
+    StepVerifier.create(merged)
+        .expectError()
+        .verify();
   }
 }
