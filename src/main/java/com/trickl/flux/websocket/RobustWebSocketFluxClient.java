@@ -12,12 +12,10 @@ import com.trickl.flux.mappers.ThrowableMapper;
 import com.trickl.flux.retry.ExponentialBackoffRetry;
 import com.trickl.flux.websocket.stomp.RawStompFluxClient;
 import com.trickl.flux.websocket.stomp.StompFrame;
-import com.trickl.flux.websocket.stomp.frames.StompDisconnectFrame;
-import com.trickl.flux.websocket.stomp.frames.StompErrorFrame;
+//import com.trickl.flux.websocket.stomp.frames.StompErrorFrame;
 import com.trickl.flux.websocket.stomp.frames.StompHeartbeatFrame;
 import com.trickl.flux.websocket.stomp.frames.StompMessageFrame;
 import com.trickl.flux.websocket.stomp.frames.StompReceiptFrame;
-import com.trickl.flux.websocket.stomp.frames.StompSubscribeFrame;
 import com.trickl.flux.websocket.stomp.frames.StompUnsubscribeFrame;
 import java.io.IOException;
 import java.net.URI;
@@ -25,8 +23,10 @@ import java.text.MessageFormat;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -79,6 +79,21 @@ public class RobustWebSocketFluxClient {
   @Builder.Default
   private Function<StompFrame, Duration> getHeartbeatReceiveFrequencyCallback =
       connectedFrame -> Duration.ofSeconds(10);
+
+  @Builder.Default
+  private Supplier<Optional<StompFrame>> getDisconnectFrame = () -> Optional.empty();
+
+  @Builder.Default
+  private BiFunction<String, String, Optional<StompFrame>> getSubscriptionFrame = 
+      (String destination, String subscriptionId) -> Optional.empty();
+
+  @Builder.Default
+  private Function<Throwable, Optional<StompFrame>> getErrorFrame = 
+      (Throwable error) -> Optional.empty();
+
+  @Builder.Default
+  private Function<StompFrame, Optional<Throwable>> readErrorFrame = 
+      (StompFrame frame) -> Optional.empty();
 
   private final AtomicInteger maxSubscriptionNumber = new AtomicInteger(0);
 
@@ -363,23 +378,28 @@ public class RobustWebSocketFluxClient {
   }
 
   protected void disconnect(
-      FluxSink<StompFrame> streamRequestSink, FluxSink<Duration> receiptExpectationSink) {
-    StompDisconnectFrame disconnectFrame = StompDisconnectFrame.builder().build();
-    log.info("Disconnecting...");
-    receiptExpectationSink.next(disconnectionReceiptTimeout);
-    streamRequestSink.next(disconnectFrame);
+      FluxSink<StompFrame> streamRequestSink, FluxSink<Duration> receiptExpectationSink) {    
+    Optional<StompFrame> disconnectFrame = getDisconnectFrame.get();
+    log.info("Disconnecting...");    
+    if (disconnectFrame.isPresent()) {
+      receiptExpectationSink.next(disconnectionReceiptTimeout);
+      streamRequestSink.next(disconnectFrame.get());
+    }
   }
 
-  protected StompFrame handleErrorFrame(StompFrame frame) throws RemoteStreamException {
-    if (StompErrorFrame.class.equals(frame.getClass())) {
-      throw new RemoteStreamException(((StompErrorFrame) frame).getMessage());
+  protected StompFrame handleErrorFrame(StompFrame frame) throws RemoteStreamException {  
+    Optional<Throwable> error = readErrorFrame.apply(frame);
+    if (error.isPresent()) {
+      throw new RemoteStreamException("Remote stream encountered error", error.get());
     }
     return frame;
   }
 
   protected void sendErrorFrame(Throwable error, FluxSink<StompFrame> streamRequestSink) {
-    StompFrame frame = StompErrorFrame.builder().message(error.toString()).build();
-    streamRequestSink.next(frame);
+    Optional<StompFrame> errorFrame = getErrorFrame.apply(error);
+    if (errorFrame.isPresent()) {
+      streamRequestSink.next(errorFrame.get());
+    }
   }
 
   protected Publisher<StompHeartbeatFrame> sendHeartbeats(
@@ -430,12 +450,12 @@ public class RobustWebSocketFluxClient {
     log.info("Subscribing to destination " + destination);
     int subscriptionNumber = maxSubscriptionNumber.getAndIncrement();
     String subscriptionId = MessageFormat.format("sub-{0}", subscriptionNumber);
-    StompFrame frame =
-        StompSubscribeFrame.builder()
-            .destination(destination)
-            .subscriptionId(subscriptionId)
-            .build();
-    streamRequestSinkRef.next(frame);
+
+    Optional<StompFrame> subscriptionFrame = 
+        getSubscriptionFrame.apply(destination, subscriptionId);
+    if (subscriptionFrame.isPresent()) {
+      streamRequestSinkRef.next(subscriptionFrame.get());
+    }
     return subscriptionId;
   }
 

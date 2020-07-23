@@ -4,6 +4,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trickl.flux.websocket.RobustWebSocketFluxClient;
 import com.trickl.flux.websocket.stomp.frames.StompConnectFrame;
 import com.trickl.flux.websocket.stomp.frames.StompConnectedFrame;
+import com.trickl.flux.websocket.stomp.frames.StompDisconnectFrame;
+import com.trickl.flux.websocket.stomp.frames.StompErrorFrame;
+import com.trickl.flux.websocket.stomp.frames.StompSubscribeFrame;
 import java.net.URI;
 import java.time.Duration;
 import java.util.Optional;
@@ -50,7 +53,21 @@ public class StompFluxClient {
                 frame -> ((StompConnectedFrame) frame).getHeartbeatSendFrequency())
             .getHeartbeatReceiveFrequencyCallback(
                 frame -> ((StompConnectedFrame) frame).getHeartbeatReceiveFrequency())
-            .doConnect(this::doConnect);
+            .doConnect(this::doConnect)
+            .getDisconnectFrame(() -> Optional.of(StompDisconnectFrame.builder().build()))
+            .getSubscriptionFrame((destination, subscriptionId) -> 
+              Optional.of(StompSubscribeFrame.builder()
+              .destination(destination)
+              .subscriptionId(subscriptionId)
+              .build()))
+            .getErrorFrame(error -> Optional.of(
+                StompErrorFrame.builder().message(error.toString()).build()))
+            .readErrorFrame(frame -> {
+              if (frame instanceof StompErrorFrame) {
+                return Optional.of(new RuntimeException(((StompErrorFrame) frame).getMessage()));
+              }
+              return Optional.empty();            
+            });
     if (objectMapper != null) {
       robustWebSocketFluxClientBuilder.objectMapper(objectMapper);
     }
