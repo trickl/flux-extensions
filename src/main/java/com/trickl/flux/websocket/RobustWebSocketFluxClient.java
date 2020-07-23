@@ -12,11 +12,8 @@ import com.trickl.flux.mappers.ThrowableMapper;
 import com.trickl.flux.retry.ExponentialBackoffRetry;
 import com.trickl.flux.websocket.stomp.RawStompFluxClient;
 import com.trickl.flux.websocket.stomp.StompFrame;
-//import com.trickl.flux.websocket.stomp.frames.StompErrorFrame;
-import com.trickl.flux.websocket.stomp.frames.StompHeartbeatFrame;
 import com.trickl.flux.websocket.stomp.frames.StompMessageFrame;
 import com.trickl.flux.websocket.stomp.frames.StompReceiptFrame;
-import com.trickl.flux.websocket.stomp.frames.StompUnsubscribeFrame;
 import java.io.IOException;
 import java.net.URI;
 import java.text.MessageFormat;
@@ -84,12 +81,20 @@ public class RobustWebSocketFluxClient {
   private Supplier<Optional<StompFrame>> getDisconnectFrame = () -> Optional.empty();
 
   @Builder.Default
-  private BiFunction<String, String, Optional<StompFrame>> getSubscriptionFrame = 
+  private BiFunction<String, String, Optional<StompFrame>> getSubscribeFrame = 
       (String destination, String subscriptionId) -> Optional.empty();
+
+  @Builder.Default
+  private Function<String, Optional<StompFrame>> getUnsubscribeFrame = 
+      (String subscriptionId) -> Optional.empty();
 
   @Builder.Default
   private Function<Throwable, Optional<StompFrame>> getErrorFrame = 
       (Throwable error) -> Optional.empty();
+
+  @Builder.Default
+      private Function<Long, Optional<StompFrame>> getHeartbeatFrame = 
+          (Long count) -> Optional.empty();
 
   @Builder.Default
   private Function<StompFrame, Optional<Throwable>> readErrorFrame = 
@@ -402,7 +407,7 @@ public class RobustWebSocketFluxClient {
     }
   }
 
-  protected Publisher<StompHeartbeatFrame> sendHeartbeats(
+  protected Publisher<StompFrame> sendHeartbeats(
       Duration frequency, FluxSink<StompFrame> streamRequestSink) {
     log.info("Sending heartbeats every " + frequency.toString());
     if (frequency.isZero()) {
@@ -410,12 +415,14 @@ public class RobustWebSocketFluxClient {
     }
 
     return Flux.interval(frequency)
-        .map(count -> new StompHeartbeatFrame())
-        .startWith(new StompHeartbeatFrame())
+        .map(count -> getHeartbeatFrame.apply(count))
+        .startWith(getHeartbeatFrame.apply(0L))
         .flatMap(
-            heartbeat -> {
-              streamRequestSink.next(heartbeat);
-              return Mono.<StompHeartbeatFrame>empty();
+            optionalHeartbeat -> {
+              if (optionalHeartbeat.isPresent()) {
+                streamRequestSink.next(optionalHeartbeat.get());
+              }
+              return Mono.<StompFrame>empty();
             })
         .log("heartbeats", Level.INFO);
   }
@@ -451,10 +458,10 @@ public class RobustWebSocketFluxClient {
     int subscriptionNumber = maxSubscriptionNumber.getAndIncrement();
     String subscriptionId = MessageFormat.format("sub-{0}", subscriptionNumber);
 
-    Optional<StompFrame> subscriptionFrame = 
-        getSubscriptionFrame.apply(destination, subscriptionId);
-    if (subscriptionFrame.isPresent()) {
-      streamRequestSinkRef.next(subscriptionFrame.get());
+    Optional<StompFrame> subscribeFrame = 
+        getSubscribeFrame.apply(destination, subscriptionId);
+    if (subscribeFrame.isPresent()) {
+      streamRequestSinkRef.next(subscribeFrame.get());
     }
     return subscriptionId;
   }
@@ -532,8 +539,11 @@ public class RobustWebSocketFluxClient {
     subscriptionDestinationIdMap.computeIfPresent(
         destination,
         (dest, subscriptionId) -> {
-          StompFrame frame = StompUnsubscribeFrame.builder().subscriptionId(subscriptionId).build();
-          streamRequestSink.next(frame);
+          Optional<StompFrame> unsubscribeFrame = 
+              getUnsubscribeFrame.apply(subscriptionId);
+          if (unsubscribeFrame.isPresent()) {
+            streamRequestSink.next(unsubscribeFrame.get());
+          }
           return null;
         });
   }

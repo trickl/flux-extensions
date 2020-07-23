@@ -6,7 +6,9 @@ import com.trickl.flux.websocket.stomp.frames.StompConnectFrame;
 import com.trickl.flux.websocket.stomp.frames.StompConnectedFrame;
 import com.trickl.flux.websocket.stomp.frames.StompDisconnectFrame;
 import com.trickl.flux.websocket.stomp.frames.StompErrorFrame;
+import com.trickl.flux.websocket.stomp.frames.StompHeartbeatFrame;
 import com.trickl.flux.websocket.stomp.frames.StompSubscribeFrame;
+import com.trickl.flux.websocket.stomp.frames.StompUnsubscribeFrame;
 import java.net.URI;
 import java.time.Duration;
 import java.util.Optional;
@@ -55,11 +57,16 @@ public class StompFluxClient {
                 frame -> ((StompConnectedFrame) frame).getHeartbeatReceiveFrequency())
             .doConnect(this::doConnect)
             .getDisconnectFrame(() -> Optional.of(StompDisconnectFrame.builder().build()))
-            .getSubscriptionFrame((destination, subscriptionId) -> 
+            .getSubscribeFrame((destination, subscriptionId) -> 
               Optional.of(StompSubscribeFrame.builder()
               .destination(destination)
               .subscriptionId(subscriptionId)
               .build()))
+            .getUnsubscribeFrame((subscriptionId) -> 
+              Optional.of(StompUnsubscribeFrame.builder()
+              .subscriptionId(subscriptionId)
+              .build()))
+            .getHeartbeatFrame((count) -> Optional.of(new StompHeartbeatFrame()))
             .getErrorFrame(error -> Optional.of(
                 StompErrorFrame.builder().message(error.toString()).build()))
             .readErrorFrame(frame -> {
