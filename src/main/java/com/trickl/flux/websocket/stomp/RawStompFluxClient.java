@@ -4,7 +4,6 @@ import com.trickl.flux.mappers.FluxSinkAdapter;
 import com.trickl.flux.websocket.BinaryWebSocketHandler;
 import com.trickl.flux.websocket.WebSocketFluxClient;
 import java.net.URI;
-import java.time.Duration;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.logging.Level;
@@ -20,20 +19,19 @@ import reactor.core.publisher.Mono;
 public class RawStompFluxClient {
   private final WebSocketClient webSocketClient;
   private final Supplier<URI> transportUriProvider;
-  @Builder.Default private Mono<HttpHeaders> webSocketHeadersProvider
-      = Mono.fromSupplier(HttpHeaders::new);
 
   @Builder.Default
-  private Mono<Void> doBeforeOpen = Mono.empty();
+  private Mono<HttpHeaders> webSocketHeadersProvider = Mono.fromSupplier(HttpHeaders::new);
 
-  @Builder.Default private Function<FluxSink<StompFrame>, Mono<Void>> doAfterOpen
-      = response -> Mono.empty();
+  @Builder.Default private Mono<Void> doBeforeOpen = Mono.empty();
+
+  @Builder.Default
+  private Function<FluxSink<StompFrame>, Mono<Void>> doAfterOpen = response -> Mono.empty();
 
   @Builder.Default
   private Function<Publisher<StompFrame>, Mono<Void>> doBeforeClose = response -> Mono.empty();
 
-  @Builder.Default
-  private Mono<Void> doAfterClose = Mono.empty();
+  @Builder.Default private Mono<Void> doAfterClose = Mono.empty();
 
   private final StompMessageCodec codec = new StompMessageCodec();
 
@@ -54,18 +52,15 @@ public class RawStompFluxClient {
             .handlerFactory(BinaryWebSocketHandler::new)
             .webSocketHeadersProvider(webSocketHeadersProvider)
             .doBeforeOpen(doBeforeOpen)
-            .doAfterOpen(sink -> doAfterOpen.apply(
-                new FluxSinkAdapter<StompFrame, byte[]>(sink, codec::encode)))
-            .doBeforeClose(response -> 
-               doBeforeClose.apply(stompInputTransformer.apply(response))
-            )
+            .doAfterOpen(
+                sink ->
+                    doAfterOpen.apply(new FluxSinkAdapter<StompFrame, byte[]>(sink, codec::encode)))
+            .doBeforeClose(response -> doBeforeClose.apply(stompInputTransformer.apply(response)))
             .doAfterClose(doAfterClose)
             .build();
 
     return stompInputTransformer
-        .apply(
-            webSocketFluxClient.get(
-                stompOutputTransformer.apply(send)))
+        .apply(webSocketFluxClient.get(stompOutputTransformer.apply(send)))
         .log("Raw Stomp Flux Client", Level.FINER);
   }
 }

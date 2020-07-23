@@ -3,6 +3,7 @@ package com.trickl.flux.websocket.stomp;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trickl.flux.websocket.RobustWebSocketFluxClient;
 import com.trickl.flux.websocket.stomp.frames.StompConnectFrame;
+import com.trickl.flux.websocket.stomp.frames.StompConnectedFrame;
 import java.net.URI;
 import java.time.Duration;
 import java.util.Optional;
@@ -38,12 +39,17 @@ public class StompFluxClient {
       Duration initialRetryDelay,
       Duration retryConsiderationPeriod,
       Mono<Void> doBeforeSessionOpen,
-      Mono<Void> doAfterSessionClose, 
+      Mono<Void> doAfterSessionClose,
       int maxRetries) {
-    RobustWebSocketFluxClient.RobustWebSocketFluxClientBuilder robustWebSocketFluxClientBuilder 
-        = RobustWebSocketFluxClient.builder()
+    RobustWebSocketFluxClient.RobustWebSocketFluxClientBuilder robustWebSocketFluxClientBuilder =
+        RobustWebSocketFluxClient.builder()
             .webSocketClient(webSocketClient)
             .transportUriProvider(transportUriProvider)
+            .isConnectedFrame(this::isConnectedFrame)
+            .getHeartbeatSendFrequencyCallback(
+                frame -> ((StompConnectedFrame) frame).getHeartbeatSendFrequency())
+            .getHeartbeatReceiveFrequencyCallback(
+                frame -> ((StompConnectedFrame) frame).getHeartbeatReceiveFrequency())
             .doConnect(this::doConnect);
     if (objectMapper != null) {
       robustWebSocketFluxClientBuilder.objectMapper(objectMapper);
@@ -69,13 +75,17 @@ public class StompFluxClient {
     if (maxRetries != 0) {
       robustWebSocketFluxClientBuilder.maxRetries(maxRetries);
     }
-    
+
     robustWebSocketFluxClient = robustWebSocketFluxClientBuilder.build();
     this.connectionTimeout = Optional.ofNullable(connectionTimeout).orElse(this.connectionTimeout);
-    this.heartbeatSendFrequency = Optional.ofNullable(heartbeatSendFrequency)
-        .orElse(this.heartbeatSendFrequency);
-    this.heartbeatReceiveFrequency = Optional.ofNullable(heartbeatReceiveFrequency)
-        .orElse(this.heartbeatReceiveFrequency);
+    this.heartbeatSendFrequency =
+        Optional.ofNullable(heartbeatSendFrequency).orElse(this.heartbeatSendFrequency);
+    this.heartbeatReceiveFrequency =
+        Optional.ofNullable(heartbeatReceiveFrequency).orElse(this.heartbeatReceiveFrequency);
+  }
+
+  protected boolean isConnectedFrame(StompFrame frame) {
+    return StompConnectedFrame.class.equals(frame.getClass());
   }
 
   protected Duration doConnect(FluxSink<StompFrame> streamRequestSink) {
@@ -91,7 +101,7 @@ public class StompFluxClient {
 
     return connectionTimeout;
   }
-  
+
   /**
    * Subscribe to a destination.
    *

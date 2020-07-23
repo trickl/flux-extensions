@@ -187,35 +187,4 @@ public class StompFluxClientTest {
         .expectErrorMessage("Max retries exceeded")
         .verify(Duration.ofMinutes(30));
   }
-
-  @Test
-  public void testConnectionPrinciple() {
-    Flux<String> base = Flux.<String>create(sink -> {
-      sink.next("C");
-      sink.next("1");
-      sink.next("2");
-      sink.next("3");
-    }).log("base");
-    Flux<String> connected = base.filter("C"::equals)
-        .log("connection", Level.INFO);
-
-    Flux<String> connectedWithExpectation = connected
-        .mergeWith(Flux.just(1).delayElements(Duration.ofSeconds(1)).flatMap(trigger -> Flux.error(
-          new RuntimeException("Scheduled Error"))));
-
-
-    Flux<String> sharedBasePostConnection = connectedWithExpectation
-        .flatMap(connectedFrame -> {
-          return base.share().log("sharedBase");
-        }).log("sharedBasePostConnection");
-
-    Flux<String> filtered = sharedBasePostConnection.filter(value -> false)
-        .log("filtered");
-
-    Flux<String> merged = Flux.<String>empty().mergeWith(filtered).log("merged");
-
-    StepVerifier.create(merged)
-        .expectError()
-        .verify();
-  }
 }
