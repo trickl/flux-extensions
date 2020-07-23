@@ -57,25 +57,16 @@ public class StompFluxClient {
             .transportUriProvider(transportUriProvider)
             .isConnectedFrame(this::isConnectedFrame)
             .isDataFrameForDestination(this::isDataFrameForDestination)
-            .getHeartbeatSendFrequencyCallback(
-                frame -> ((StompConnectedFrame) frame).getHeartbeatSendFrequency())
-            .getHeartbeatReceiveFrequencyCallback(
-                frame -> ((StompConnectedFrame) frame).getHeartbeatReceiveFrequency())
+            .getHeartbeatSendFrequencyCallback(this::getHeartbeatSendFrequency)
+            .getHeartbeatReceiveFrequencyCallback(this::getHeartbeatReceiveFrequency)
             .doConnect(this::doConnect)
-            .getDisconnectFrame(() -> Optional.of(StompDisconnectFrame.builder().build()))
-            .getSubscribeFrame((destination, subscriptionId) -> 
-              Optional.of(StompSubscribeFrame.builder()
-              .destination(destination)
-              .subscriptionId(subscriptionId)
-              .build()))
-            .getUnsubscribeFrame((subscriptionId) -> 
-              Optional.of(StompUnsubscribeFrame.builder()
-              .subscriptionId(subscriptionId)
-              .build()))
-            .getHeartbeatFrame((count) -> Optional.of(new StompHeartbeatFrame()))
-            .getErrorFrame(error -> Optional.of(
-                StompErrorFrame.builder().message(error.toString()).build()))
+            .buildDisconnectFrame(this::buildDisconnectFrame)
+            .buildSubscribeFrame(this::buildSubscribeFrame)
+            .buildUnsubscribeFrame(this::buildUnsubscribeFrame)
+            .buildHeartbeatFrame(this::buildHeartbeatFrame)
+            .buildErrorFrame(this::buildErrorFrame)
             .decodeErrorFrame(this::decodeErrorFrame);
+
     if (webSocketHeadersProvider != null) {
       robustWebSocketFluxClientBuilder.webSocketHeadersProvider(webSocketHeadersProvider);
     }
@@ -119,6 +110,14 @@ public class StompFluxClient {
     return ((StompMessageFrame) frame).getDestination().equals(destination);
   }
 
+  protected Duration getHeartbeatSendFrequency(StompFrame connectedFrame) {
+    return ((StompConnectedFrame) connectedFrame).getHeartbeatSendFrequency();
+  }
+
+  protected Duration getHeartbeatReceiveFrequency(StompFrame connectedFrame) {
+    return ((StompConnectedFrame) connectedFrame).getHeartbeatReceiveFrequency();
+  }
+
   protected <T> T decodeDataFrame(StompFrame frame, Class<T> messageType)
       throws IOException {
     return objectMapper.readValue(((StompMessageFrame) frame).getBody(), messageType);
@@ -129,6 +128,32 @@ public class StompFluxClient {
       return Optional.of(new RuntimeException(((StompErrorFrame) frame).getMessage()));
     }
     return Optional.empty();                
+  }
+
+  protected Optional<StompFrame> buildDisconnectFrame() {
+    return Optional.of(StompDisconnectFrame.builder().build());
+  }
+
+  protected Optional<StompFrame> buildSubscribeFrame(String destination, String subscriptionId) {
+    return  Optional.of(StompSubscribeFrame.builder()
+    .destination(destination)
+    .subscriptionId(subscriptionId)
+    .build());
+  }
+
+  protected Optional<StompFrame> buildUnsubscribeFrame(String subscriptionId) {
+    return Optional.of(StompUnsubscribeFrame.builder()
+    .subscriptionId(subscriptionId)
+    .build());
+  }
+
+  protected Optional<StompFrame> buildHeartbeatFrame(Long count) {
+    return Optional.of(new StompHeartbeatFrame());
+  }
+
+  protected Optional<StompFrame> buildErrorFrame(Throwable error) {
+    return Optional.of(
+      StompErrorFrame.builder().message(error.toString()).build());
   }
 
   protected Duration doConnect(FluxSink<StompFrame> streamRequestSink) {

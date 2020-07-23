@@ -77,22 +77,22 @@ public class RobustWebSocketFluxClient {
       connectedFrame -> Duration.ofSeconds(10);
 
   @Builder.Default
-  private Supplier<Optional<StompFrame>> getDisconnectFrame = () -> Optional.empty();
+  private Supplier<Optional<StompFrame>> buildDisconnectFrame = () -> Optional.empty();
 
   @Builder.Default
-  private BiFunction<String, String, Optional<StompFrame>> getSubscribeFrame = 
+  private BiFunction<String, String, Optional<StompFrame>> buildSubscribeFrame = 
       (String destination, String subscriptionId) -> Optional.empty();
 
   @Builder.Default
-  private Function<String, Optional<StompFrame>> getUnsubscribeFrame = 
+  private Function<String, Optional<StompFrame>> buildUnsubscribeFrame = 
       (String subscriptionId) -> Optional.empty();
 
   @Builder.Default
-  private Function<Throwable, Optional<StompFrame>> getErrorFrame = 
+  private Function<Throwable, Optional<StompFrame>> buildErrorFrame = 
       (Throwable error) -> Optional.empty();
 
   @Builder.Default
-      private Function<Long, Optional<StompFrame>> getHeartbeatFrame = 
+      private Function<Long, Optional<StompFrame>> buildHeartbeatFrame = 
           (Long count) -> Optional.empty();
 
   @Builder.Default
@@ -383,7 +383,7 @@ public class RobustWebSocketFluxClient {
 
   protected void disconnect(
       FluxSink<StompFrame> streamRequestSink, FluxSink<Duration> receiptExpectationSink) {    
-    Optional<StompFrame> disconnectFrame = getDisconnectFrame.get();
+    Optional<StompFrame> disconnectFrame = buildDisconnectFrame.get();
     log.info("Disconnecting...");    
     if (disconnectFrame.isPresent()) {
       receiptExpectationSink.next(disconnectionReceiptTimeout);
@@ -400,7 +400,7 @@ public class RobustWebSocketFluxClient {
   }
 
   protected void sendErrorFrame(Throwable error, FluxSink<StompFrame> streamRequestSink) {
-    Optional<StompFrame> errorFrame = getErrorFrame.apply(error);
+    Optional<StompFrame> errorFrame = buildErrorFrame.apply(error);
     if (errorFrame.isPresent()) {
       streamRequestSink.next(errorFrame.get());
     }
@@ -414,8 +414,8 @@ public class RobustWebSocketFluxClient {
     }
 
     return Flux.interval(frequency)
-        .map(count -> getHeartbeatFrame.apply(count))
-        .startWith(getHeartbeatFrame.apply(0L))
+        .map(count -> buildHeartbeatFrame.apply(count))
+        .startWith(buildHeartbeatFrame.apply(0L))
         .flatMap(
             optionalHeartbeat -> {
               if (optionalHeartbeat.isPresent()) {
@@ -458,7 +458,7 @@ public class RobustWebSocketFluxClient {
     String subscriptionId = MessageFormat.format("sub-{0}", subscriptionNumber);
 
     Optional<StompFrame> subscribeFrame = 
-        getSubscribeFrame.apply(destination, subscriptionId);
+        buildSubscribeFrame.apply(destination, subscriptionId);
     if (subscribeFrame.isPresent()) {
       streamRequestSinkRef.next(subscribeFrame.get());
     }
@@ -532,7 +532,7 @@ public class RobustWebSocketFluxClient {
         destination,
         (dest, subscriptionId) -> {
           Optional<StompFrame> unsubscribeFrame = 
-              getUnsubscribeFrame.apply(subscriptionId);
+              buildUnsubscribeFrame.apply(subscriptionId);
           if (unsubscribeFrame.isPresent()) {
             streamRequestSink.next(unsubscribeFrame.get());
           }
