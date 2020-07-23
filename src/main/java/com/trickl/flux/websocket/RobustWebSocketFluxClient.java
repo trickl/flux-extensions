@@ -11,7 +11,6 @@ import com.trickl.flux.mappers.ThrowableMapper;
 import com.trickl.flux.retry.ExponentialBackoffRetry;
 import com.trickl.flux.websocket.stomp.RawStompFluxClient;
 import com.trickl.flux.websocket.stomp.StompFrame;
-import com.trickl.flux.websocket.stomp.frames.StompReceiptFrame;
 import java.net.URI;
 import java.text.MessageFormat;
 import java.time.Duration;
@@ -64,6 +63,8 @@ public class RobustWebSocketFluxClient {
   private Function<FluxSink<StompFrame>, Duration> doConnect = sink -> Duration.ZERO;
 
   @Builder.Default private Predicate<StompFrame> isConnectedFrame = frame -> true;
+
+  @Builder.Default private Predicate<StompFrame> isReceiptFrame = frame -> true;
 
   @Builder.Default private BiPredicate<StompFrame, String> isDataFrameForDestination =
       (frame, destination) -> true;
@@ -296,7 +297,7 @@ public class RobustWebSocketFluxClient {
     ExpectedResponseTimeoutFactory<StompFrame> receiptExpectationFactory =
         ExpectedResponseTimeoutFactory.<StompFrame>builder()
             .isRecurring(false)
-            .isResponse(frame -> frame instanceof StompReceiptFrame)
+            .isResponse(frame -> isReceiptFrame.test(frame))
             .timeoutExceptionMapper(
                 (error, period) ->
                     new ReceiptTimeoutException("No receipt within " + period, error))
@@ -375,8 +376,7 @@ public class RobustWebSocketFluxClient {
 
     return Mono.from(
             Flux.from(response)
-                .filter(frame -> StompReceiptFrame.class.equals(frame.getClass()))
-                .cast(StompReceiptFrame.class)
+                .filter(frame -> isReceiptFrame.test(frame))                
                 .log("disconnect"))
         .then();
   }

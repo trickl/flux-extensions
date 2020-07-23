@@ -9,6 +9,7 @@ import com.trickl.flux.websocket.stomp.frames.StompDisconnectFrame;
 import com.trickl.flux.websocket.stomp.frames.StompErrorFrame;
 import com.trickl.flux.websocket.stomp.frames.StompHeartbeatFrame;
 import com.trickl.flux.websocket.stomp.frames.StompMessageFrame;
+import com.trickl.flux.websocket.stomp.frames.StompReceiptFrame;
 import com.trickl.flux.websocket.stomp.frames.StompSubscribeFrame;
 import com.trickl.flux.websocket.stomp.frames.StompUnsubscribeFrame;
 import java.io.IOException;
@@ -100,6 +101,10 @@ public class StompFluxClient {
 
   protected boolean isConnectedFrame(StompFrame frame) {
     return StompConnectedFrame.class.equals(frame.getClass());
+  }
+
+  protected boolean isReceiptFrame(StompFrame frame) {
+    return StompReceiptFrame.class.equals(frame.getClass());
   }
 
   protected boolean isDataFrameForDestination(StompFrame frame, String destination) {
