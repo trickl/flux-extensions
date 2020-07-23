@@ -1,7 +1,6 @@
 package com.trickl.flux.websocket;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trickl.exceptions.ConnectionTimeoutException;
 import com.trickl.exceptions.MissingHeartbeatException;
 import com.trickl.exceptions.NoDataException;
@@ -12,9 +11,7 @@ import com.trickl.flux.mappers.ThrowableMapper;
 import com.trickl.flux.retry.ExponentialBackoffRetry;
 import com.trickl.flux.websocket.stomp.RawStompFluxClient;
 import com.trickl.flux.websocket.stomp.StompFrame;
-import com.trickl.flux.websocket.stomp.frames.StompMessageFrame;
 import com.trickl.flux.websocket.stomp.frames.StompReceiptFrame;
-import java.io.IOException;
 import java.net.URI;
 import java.text.MessageFormat;
 import java.time.Duration;
@@ -24,6 +21,7 @@ import java.util.Optional;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
+import java.util.function.BiPredicate;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -48,8 +46,6 @@ public class RobustWebSocketFluxClient {
 
   @Getter private final Supplier<URI> transportUriProvider;
 
-  @Builder.Default private final ObjectMapper objectMapper = new ObjectMapper();
-
   @Builder.Default private Supplier<HttpHeaders> webSocketHeadersProvider = HttpHeaders::new;
 
   @Builder.Default private Duration disconnectionReceiptTimeout = Duration.ofSeconds(5);
@@ -68,6 +64,9 @@ public class RobustWebSocketFluxClient {
   private Function<FluxSink<StompFrame>, Duration> doConnect = sink -> Duration.ZERO;
 
   @Builder.Default private Predicate<StompFrame> isConnectedFrame = frame -> true;
+
+  @Builder.Default private BiPredicate<StompFrame, String> isDataFrameForDestination =
+      (frame, destination) -> true;
 
   @Builder.Default
   private Function<StompFrame, Duration> getHeartbeatSendFrequencyCallback =
@@ -97,7 +96,7 @@ public class RobustWebSocketFluxClient {
           (Long count) -> Optional.empty();
 
   @Builder.Default
-  private Function<StompFrame, Optional<Throwable>> readErrorFrame = 
+  private Function<StompFrame, Optional<Throwable>> decodeErrorFrame = 
       (StompFrame frame) -> Optional.empty();
 
   private final AtomicInteger maxSubscriptionNumber = new AtomicInteger(0);
@@ -393,7 +392,7 @@ public class RobustWebSocketFluxClient {
   }
 
   protected StompFrame handleErrorFrame(StompFrame frame) throws RemoteStreamException {  
-    Optional<Throwable> error = readErrorFrame.apply(frame);
+    Optional<Throwable> error = decodeErrorFrame.apply(frame);
     if (error.isPresent()) {
       throw new RemoteStreamException("Remote stream encountered error", error.get());
     }
@@ -479,8 +478,8 @@ public class RobustWebSocketFluxClient {
    * @param minMessageFrequency Unsubscribe if no message received in this time
    * @return A flux of messages on that channel
    */
-  public <T> Flux<T> subscribe(
-      String destination, Class<T> messageType, Duration minMessageFrequency) {
+  public Flux<StompFrame> subscribe(
+      String destination, Duration minMessageFrequency) {
     // Drain the subscription only once
     Consumer<FluxSink<StompFrame>> doAfterSharedStreamSubscribe =
         sink -> {
@@ -492,26 +491,22 @@ public class RobustWebSocketFluxClient {
     return getSharedStreamContext(doAfterSharedStreamSubscribe)
         .flatMap(
             sharedStreamContext ->
-                Flux.<T, SharedStreamContext>usingWhen(
+                Flux.<StompFrame, SharedStreamContext>usingWhen(
                     Mono.fromSupplier(() -> sharedStreamContext),
                     context ->
-                        subscribe(context, destination, messageType, minMessageFrequency)
+                        subscribe(context, destination, minMessageFrequency)
                             .log("sharedStreamContext", Level.INFO),
                     context -> Mono.empty()))
         .log("outerSubscribe", Level.INFO);
   }
 
-  protected <T> Flux<T> subscribe(
+  protected Flux<StompFrame> subscribe(
       SharedStreamContext context,
       String destination,
-      Class<T> messageType,
       Duration minMessageFrequency) {
-    Flux<StompMessageFrame> messageFrameFlux =
-        context
+    return context
             .getSharedStream()
-            .filter(frame -> frame instanceof StompMessageFrame)
-            .cast(StompMessageFrame.class)
-            .filter(frame -> frame.getDestination().equals(destination))
+            .filter(frame -> isDataFrameForDestination.test(frame, destination))
             .timeout(minMessageFrequency)
             .onErrorMap(
                 error -> {
@@ -530,9 +525,6 @@ public class RobustWebSocketFluxClient {
                             .getStreamRequestProcessor()
                             .getSink()))
             .log("innerSubscribe", Level.INFO);
-
-    return messageFrameFlux.flatMap(
-        new ThrowableMapper<>(frame -> readStompMessageFrame(frame, messageType)));
   }
 
   protected void unsubscribe(String destination, FluxSink<StompFrame> streamRequestSink) {
@@ -546,11 +538,6 @@ public class RobustWebSocketFluxClient {
           }
           return null;
         });
-  }
-
-  protected <T> T readStompMessageFrame(StompMessageFrame frame, Class<T> messageType)
-      throws IOException {
-    return objectMapper.readValue(frame.getBody(), messageType);
   }
 
   @Value

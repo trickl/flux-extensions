@@ -1,14 +1,17 @@
 package com.trickl.flux.websocket.stomp;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.trickl.flux.mappers.ThrowableMapper;
 import com.trickl.flux.websocket.RobustWebSocketFluxClient;
 import com.trickl.flux.websocket.stomp.frames.StompConnectFrame;
 import com.trickl.flux.websocket.stomp.frames.StompConnectedFrame;
 import com.trickl.flux.websocket.stomp.frames.StompDisconnectFrame;
 import com.trickl.flux.websocket.stomp.frames.StompErrorFrame;
 import com.trickl.flux.websocket.stomp.frames.StompHeartbeatFrame;
+import com.trickl.flux.websocket.stomp.frames.StompMessageFrame;
 import com.trickl.flux.websocket.stomp.frames.StompSubscribeFrame;
 import com.trickl.flux.websocket.stomp.frames.StompUnsubscribeFrame;
+import java.io.IOException;
 import java.net.URI;
 import java.time.Duration;
 import java.util.Optional;
@@ -31,6 +34,8 @@ public class StompFluxClient {
 
   private Duration heartbeatReceiveFrequency = Duration.ofSeconds(5);
 
+  private ObjectMapper objectMapper = new ObjectMapper();
+
   @Builder
   StompFluxClient(
       WebSocketClient webSocketClient,
@@ -51,6 +56,7 @@ public class StompFluxClient {
             .webSocketClient(webSocketClient)
             .transportUriProvider(transportUriProvider)
             .isConnectedFrame(this::isConnectedFrame)
+            .isDataFrameForDestination(this::isDataFrameForDestination)
             .getHeartbeatSendFrequencyCallback(
                 frame -> ((StompConnectedFrame) frame).getHeartbeatSendFrequency())
             .getHeartbeatReceiveFrequencyCallback(
@@ -69,15 +75,7 @@ public class StompFluxClient {
             .getHeartbeatFrame((count) -> Optional.of(new StompHeartbeatFrame()))
             .getErrorFrame(error -> Optional.of(
                 StompErrorFrame.builder().message(error.toString()).build()))
-            .readErrorFrame(frame -> {
-              if (frame instanceof StompErrorFrame) {
-                return Optional.of(new RuntimeException(((StompErrorFrame) frame).getMessage()));
-              }
-              return Optional.empty();            
-            });
-    if (objectMapper != null) {
-      robustWebSocketFluxClientBuilder.objectMapper(objectMapper);
-    }
+            .decodeErrorFrame(this::decodeErrorFrame);
     if (webSocketHeadersProvider != null) {
       robustWebSocketFluxClientBuilder.webSocketHeadersProvider(webSocketHeadersProvider);
     }
@@ -102,6 +100,7 @@ public class StompFluxClient {
 
     robustWebSocketFluxClient = robustWebSocketFluxClientBuilder.build();
     this.connectionTimeout = Optional.ofNullable(connectionTimeout).orElse(this.connectionTimeout);
+    this.objectMapper = Optional.ofNullable(objectMapper).orElse(this.objectMapper);
     this.heartbeatSendFrequency =
         Optional.ofNullable(heartbeatSendFrequency).orElse(this.heartbeatSendFrequency);
     this.heartbeatReceiveFrequency =
@@ -110,6 +109,26 @@ public class StompFluxClient {
 
   protected boolean isConnectedFrame(StompFrame frame) {
     return StompConnectedFrame.class.equals(frame.getClass());
+  }
+
+  protected boolean isDataFrameForDestination(StompFrame frame, String destination) {
+    if (!(frame instanceof StompMessageFrame)) {
+      return false;
+    }
+
+    return ((StompMessageFrame) frame).getDestination().equals(destination);
+  }
+
+  protected <T> T decodeDataFrame(StompFrame frame, Class<T> messageType)
+      throws IOException {
+    return objectMapper.readValue(((StompMessageFrame) frame).getBody(), messageType);
+  }
+
+  protected Optional<Throwable> decodeErrorFrame(StompFrame frame) {
+    if (frame instanceof StompErrorFrame) {
+      return Optional.of(new RuntimeException(((StompErrorFrame) frame).getMessage()));
+    }
+    return Optional.empty();                
   }
 
   protected Duration doConnect(FluxSink<StompFrame> streamRequestSink) {
@@ -135,6 +154,7 @@ public class StompFluxClient {
    */
   public <T> Flux<T> subscribe(
       String destination, Class<T> messageType, Duration minMessageFrequency) {
-    return robustWebSocketFluxClient.subscribe(destination, messageType, minMessageFrequency);
+    return robustWebSocketFluxClient.subscribe(destination, minMessageFrequency)    
+        .flatMap(new ThrowableMapper<>(frame -> decodeDataFrame(frame, messageType)));
   }
 }
