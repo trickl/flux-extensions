@@ -27,7 +27,7 @@ import reactor.core.publisher.Mono;
 
 @Log
 public class StompFluxClient {
-  private final RobustWebSocketFluxClient robustWebSocketFluxClient;
+  private final RobustWebSocketFluxClient<StompFrame> robustWebSocketFluxClient;
 
   private Duration connectionTimeout = Duration.ofSeconds(3);
 
@@ -52,8 +52,9 @@ public class StompFluxClient {
       Mono<Void> doBeforeSessionOpen,
       Mono<Void> doAfterSessionClose,
       int maxRetries) {
-    RobustWebSocketFluxClient.RobustWebSocketFluxClientBuilder robustWebSocketFluxClientBuilder =
-        RobustWebSocketFluxClient.builder()
+    RobustWebSocketFluxClient.RobustWebSocketFluxClientBuilder<StompFrame>
+        robustWebSocketFluxClientBuilder =
+        RobustWebSocketFluxClient.<StompFrame>builder()
             .webSocketClient(webSocketClient)
             .transportUriProvider(transportUriProvider)
             .isConnectedFrame(this::isConnectedFrame)
@@ -66,7 +67,9 @@ public class StompFluxClient {
             .buildUnsubscribeFrame(this::buildUnsubscribeFrame)
             .buildHeartbeatFrame(this::buildHeartbeatFrame)
             .buildErrorFrame(this::buildErrorFrame)
-            .decodeErrorFrame(this::decodeErrorFrame);
+            .decodeErrorFrame(this::decodeErrorFrame)
+            .encoder(new StompFrameEncoder())
+            .decoder(new StompFrameDecoder());
 
     if (webSocketHeadersProvider != null) {
       robustWebSocketFluxClientBuilder.webSocketHeadersProvider(webSocketHeadersProvider);

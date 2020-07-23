@@ -7,16 +7,11 @@ import reactor.core.publisher.FluxSink;
 import reactor.util.context.Context;
 
 @RequiredArgsConstructor
-public class FluxSinkAdapter<T, S> implements FluxSink<T> {
+public class FluxSinkAdapter<T, S, E extends Exception> implements FluxSink<T> {
 
   private final FluxSink<S> inner;
 
-  @FunctionalInterface
-  public interface ThrowingFunction<T, S, E extends Exception> {
-    S apply(T t) throws E;
-  }
-
-  private final ThrowingFunction<T, S, ?> mapper;
+  private final ThrowingFunction<T, S, E> mapper;
 
   @Override
   public void complete() {

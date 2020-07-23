@@ -9,11 +9,6 @@ import reactor.core.publisher.Mono;
 @RequiredArgsConstructor
 public class ThrowableMapper<T, S> implements Function<T, Publisher<? extends S>> {
 
-  @FunctionalInterface
-  public interface ThrowingFunction<T, S, E extends Exception> {
-    S apply(T t) throws E;
-  }
-
   private final ThrowingFunction<T, S, ?> mapper;
 
   @Override

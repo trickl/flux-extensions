@@ -7,14 +7,19 @@ import com.trickl.exceptions.NoDataException;
 import com.trickl.exceptions.ReceiptTimeoutException;
 import com.trickl.exceptions.RemoteStreamException;
 import com.trickl.flux.mappers.ExpectedResponseTimeoutFactory;
+import com.trickl.flux.mappers.FluxSinkAdapter;
 import com.trickl.flux.mappers.ThrowableMapper;
+import com.trickl.flux.mappers.ThrowingFunction;
 import com.trickl.flux.retry.ExponentialBackoffRetry;
-import com.trickl.flux.websocket.stomp.RawStompFluxClient;
-import com.trickl.flux.websocket.stomp.StompFrame;
+import com.trickl.flux.websocket.stomp.DecodingTransformer;
+import com.trickl.flux.websocket.stomp.EncodingTransformer;
+import java.io.IOException;
 import java.net.URI;
 import java.text.MessageFormat;
 import java.time.Duration;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeoutException;
@@ -40,7 +45,7 @@ import reactor.core.publisher.Mono;
 
 @Log
 @Builder
-public class RobustWebSocketFluxClient {
+public class RobustWebSocketFluxClient<T> {
   private final WebSocketClient webSocketClient;
 
   @Getter private final Supplier<URI> transportUriProvider;
@@ -60,45 +65,51 @@ public class RobustWebSocketFluxClient {
   @Builder.Default private Mono<Void> doAfterSessionClose = Mono.empty();
 
   @Builder.Default
-  private Function<FluxSink<StompFrame>, Duration> doConnect = sink -> Duration.ZERO;
+  private Function<FluxSink<T>, Duration> doConnect = sink -> Duration.ZERO;
 
-  @Builder.Default private Predicate<StompFrame> isConnectedFrame = frame -> true;
+  @Builder.Default private Predicate<T> isConnectedFrame = frame -> true;
 
-  @Builder.Default private Predicate<StompFrame> isReceiptFrame = frame -> true;
+  @Builder.Default private Predicate<T> isReceiptFrame = frame -> true;
 
-  @Builder.Default private BiPredicate<StompFrame, String> isDataFrameForDestination =
+  @Builder.Default private BiPredicate<T, String> isDataFrameForDestination =
       (frame, destination) -> true;
 
   @Builder.Default
-  private Function<StompFrame, Duration> getHeartbeatSendFrequencyCallback =
+  private Function<T, Duration> getHeartbeatSendFrequencyCallback =
       connectedFrame -> Duration.ofSeconds(10);
 
   @Builder.Default
-  private Function<StompFrame, Duration> getHeartbeatReceiveFrequencyCallback =
+  private Function<T, Duration> getHeartbeatReceiveFrequencyCallback =
       connectedFrame -> Duration.ofSeconds(10);
 
   @Builder.Default
-  private Supplier<Optional<StompFrame>> buildDisconnectFrame = () -> Optional.empty();
+  private Supplier<Optional<T>> buildDisconnectFrame = () -> Optional.empty();
 
   @Builder.Default
-  private BiFunction<String, String, Optional<StompFrame>> buildSubscribeFrame = 
+  private BiFunction<String, String, Optional<T>> buildSubscribeFrame = 
       (String destination, String subscriptionId) -> Optional.empty();
 
   @Builder.Default
-  private Function<String, Optional<StompFrame>> buildUnsubscribeFrame = 
+  private Function<String, Optional<T>> buildUnsubscribeFrame = 
       (String subscriptionId) -> Optional.empty();
 
   @Builder.Default
-  private Function<Throwable, Optional<StompFrame>> buildErrorFrame = 
+  private Function<Throwable, Optional<T>> buildErrorFrame = 
       (Throwable error) -> Optional.empty();
 
   @Builder.Default
-      private Function<Long, Optional<StompFrame>> buildHeartbeatFrame = 
+      private Function<Long, Optional<T>> buildHeartbeatFrame = 
           (Long count) -> Optional.empty();
 
   @Builder.Default
-  private Function<StompFrame, Optional<Throwable>> decodeErrorFrame = 
-      (StompFrame frame) -> Optional.empty();
+  private Function<T, Optional<Throwable>> decodeErrorFrame = 
+      (T frame) -> Optional.empty();
+
+  @Builder.Default
+  ThrowingFunction<T, byte[], IOException> encoder = frame -> new byte[] {};
+
+  @Builder.Default
+  ThrowingFunction<byte[], List<T>, IOException> decoder = bytes -> Collections.emptyList();
 
   private final AtomicInteger maxSubscriptionNumber = new AtomicInteger(0);
 
@@ -106,7 +117,7 @@ public class RobustWebSocketFluxClient {
 
   private static final double HEARTBEAT_PERCENTAGE_TOLERANCE = 1.5;
 
-  protected ResponseContext createResponseContext() {
+  protected ResponseContext<T> createResponseContext() {
     log.info("Creating response context");
     EmitterProcessor<Long> beforeOpenSignalEmitter = EmitterProcessor.create();
     FluxSink<Long> beforeOpenSignalSink = beforeOpenSignalEmitter.sink();
@@ -114,7 +125,7 @@ public class RobustWebSocketFluxClient {
     SwitchableProcessor<Duration> connectionExpectationProcessor =
         SwitchableProcessor.create(beforeOpenSignalEmitter);
 
-    SwitchableProcessor<StompFrame> streamRequestProcessor =
+    SwitchableProcessor<T> streamRequestProcessor =
         SwitchableProcessor.create(beforeOpenSignalEmitter);
 
     EmitterProcessor<Long> connectedSignalEmitter = EmitterProcessor.create();
@@ -132,7 +143,7 @@ public class RobustWebSocketFluxClient {
     SwitchableProcessor<Duration> receiptExpectationProcessor =
         SwitchableProcessor.create(requireReceiptSignalEmitter);
 
-    return new ResponseContext(
+    return new ResponseContext<>(
         beforeOpenSignalSink,
         connectedSignalSink,
         requireReceiptSignalSink,
@@ -143,22 +154,22 @@ public class RobustWebSocketFluxClient {
         receiptExpectationProcessor);
   }
 
-  protected BaseStreamContext createBaseStreamContext(
-      ResponseContext responseContext, Flux<StompFrame> source, StompFrame connectedFrame) {
+  protected BaseStreamContext<T> createBaseStreamContext(
+      ResponseContext<T> responseContext, Flux<T> source, T connectedFrame) {
     log.info("Creating base stream context");
 
-    return new BaseStreamContext(
+    return new BaseStreamContext<>(
         responseContext,
         getHeartbeatSendFrequencyCallback.apply(connectedFrame),
         getHeartbeatReceiveFrequencyCallback.apply(connectedFrame),
         source);
   }
 
-  protected SharedStreamContext createSharedStreamContext(
-      BaseStreamContext context, Consumer<FluxSink<StompFrame>> doAfterSharedSubscribe) {
+  protected SharedStreamContext<T> createSharedStreamContext(
+      BaseStreamContext<T> context, Consumer<FluxSink<T>> doAfterSharedSubscribe) {
     log.info("Creating shared stream context");
 
-    Flux<StompFrame> sharedStream =
+    Flux<T> sharedStream =
         context
             .getStream()
             // .timeout(Duration.ofSeconds(5))
@@ -210,12 +221,12 @@ public class RobustWebSocketFluxClient {
             .log("sharedStream", Level.INFO);
 
     log.info("Returning SharedStreamContext.");
-    return new SharedStreamContext(context, sharedStream);
+    return new SharedStreamContext<>(context, sharedStream);
   }
 
-  protected Flux<SharedStreamContext> getSharedStreamContext(
-      Consumer<FluxSink<StompFrame>> doAfterSharedSubscribe) {
-    return Flux.<SharedStreamContext, ResponseContext>usingWhen(
+  protected Flux<SharedStreamContext<T>> getSharedStreamContext(
+      Consumer<FluxSink<T>> doAfterSharedSubscribe) {
+    return Flux.<SharedStreamContext<T>, ResponseContext<T>>usingWhen(
         Mono.fromSupplier(this::createResponseContext),
         context -> getSharedStreamContext(context, doAfterSharedSubscribe),
         context -> {
@@ -243,59 +254,66 @@ public class RobustWebSocketFluxClient {
         .log("baseStreamContext");
   }
 
-  protected Flux<SharedStreamContext> getSharedStreamContext(
-      ResponseContext context, Consumer<FluxSink<StompFrame>> doAfterSharedSubscribe) {
+  protected Flux<SharedStreamContext<T>> getSharedStreamContext(
+      ResponseContext<T> context, Consumer<FluxSink<T>> doAfterSharedSubscribe) {
     log.info("Creating base stream context mono");
-    Publisher<StompFrame> sendWithResponse =
+    Publisher<T> sendWithResponse =
         Flux.merge(Flux.from(context.getStreamRequestProcessor()))
             .log("sendWithResponse", Level.FINE);
 
-    RawStompFluxClient stompFluxClient =
-        RawStompFluxClient.builder()
+    WebSocketFluxClient<byte[]> webSocketFluxClient =
+         WebSocketFluxClient.<byte[]>builder()
             .webSocketClient(webSocketClient)
             .transportUriProvider(transportUriProvider)
-            .webSocketHeadersProvider(Mono.fromSupplier(webSocketHeadersProvider))
-            .doBeforeOpen(
-                doBeforeSessionOpen.then(
-                    Mono.fromRunnable(() -> context.getBeforeOpenSignalSink().next(1L))))
-            .doAfterOpen(sink -> connect(sink, context.getConnectionExpectationProcessor()))
-            .doBeforeClose(pub -> Mono.delay(Duration.ofMillis(500)).then())
+            .handlerFactory(BinaryWebSocketHandler::new)
+            .webSocketHeadersProvider(Mono.fromSupplier(webSocketHeadersProvider))        
+            .doBeforeOpen(doBeforeSessionOpen.then(
+                Mono.fromRunnable(() -> context.getBeforeOpenSignalSink().next(1L))))
+            .doAfterOpen(
+                sink ->
+                connect(new FluxSinkAdapter<T, byte[], IOException>(sink, encoder), 
+                context.getConnectionExpectationProcessor()))
+            .doBeforeClose(response -> Mono.delay(Duration.ofMillis(500)).then())
             .doAfterClose(doAfterSessionClose)
             .build();
 
-    Flux<StompFrame> base =
-        Flux.defer(() -> stompFluxClient.get(sendWithResponse))
-            .flatMap(new ThrowableMapper<StompFrame, StompFrame>(this::handleErrorFrame))
+    DecodingTransformer<T> inputTransformer = new DecodingTransformer<T>(decoder);
+    EncodingTransformer<T> outputTransformer = new EncodingTransformer<T>(encoder);
+
+    Flux<T> base =
+        Flux.defer(() -> inputTransformer.apply(
+          webSocketFluxClient.get(outputTransformer.apply(sendWithResponse))))
+            .flatMap(new ThrowableMapper<T, T>(this::handleErrorFrame))
             .log("sharedBase")
             .share()
             .doOnSubscribe(sub -> log.info("** SUBSCRIBING **" + sub.toString()))
             .doOnCancel(() -> log.info("** CANCEL  **"))
             .log("base", Level.INFO);
 
-    Flux<StompFrame> connected = base.filter(isConnectedFrame).log("connection", Level.INFO);
+    Flux<T> connected = base.filter(isConnectedFrame).log("connection", Level.INFO);
 
-    Flux<StompFrame> heartbeats =
+    Flux<T> heartbeats =
         Flux.from(context.getHeartbeatSendFrequencyProcessor())
-            .<StompFrame>switchMap(
+            .<T>switchMap(
                 frequency ->
                     sendHeartbeats(frequency, context.getStreamRequestProcessor().getSink()))
             .log("heartbeats");
 
-    ExpectedResponseTimeoutFactory<StompFrame> heartbeatExpectationFactory =
-        ExpectedResponseTimeoutFactory.<StompFrame>builder()
+    ExpectedResponseTimeoutFactory<T> heartbeatExpectationFactory =
+        ExpectedResponseTimeoutFactory.<T>builder()
             .isRecurring(true)
             .isResponse(value -> true)
             .timeoutExceptionMapper(
                 (error, frequency) ->
                     new MissingHeartbeatException("No heartbeat within " + frequency, error))
             .build();
-    Publisher<StompFrame> heartbeatExpectation =
+    Publisher<T> heartbeatExpectation =
         heartbeatExpectationFactory.apply(context.getHeartbeatExpectationProcessor(), base);
 
-    Flux<StompFrame> heartbeatExpectations = Flux.from(heartbeatExpectation).mergeWith(heartbeats);
+    Flux<T> heartbeatExpectations = Flux.from(heartbeatExpectation).mergeWith(heartbeats);
 
-    ExpectedResponseTimeoutFactory<StompFrame> receiptExpectationFactory =
-        ExpectedResponseTimeoutFactory.<StompFrame>builder()
+    ExpectedResponseTimeoutFactory<T> receiptExpectationFactory =
+        ExpectedResponseTimeoutFactory.<T>builder()
             .isRecurring(false)
             .isResponse(frame -> isReceiptFrame.test(frame))
             .timeoutExceptionMapper(
@@ -303,21 +321,21 @@ public class RobustWebSocketFluxClient {
                     new ReceiptTimeoutException("No receipt within " + period, error))
             .build();
 
-    Publisher<StompFrame> requireReceiptExpectation =
+    Publisher<T> requireReceiptExpectation =
         receiptExpectationFactory.apply(context.getReceiptExpectationProcessor(), base);
 
-    ExpectedResponseTimeoutFactory<StompFrame> connectionExpectationFactory =
-        ExpectedResponseTimeoutFactory.<StompFrame>builder()
+    ExpectedResponseTimeoutFactory<T> connectionExpectationFactory =
+        ExpectedResponseTimeoutFactory.<T>builder()
             .isRecurring(false)
             .isResponse(value -> true)
             .timeoutExceptionMapper(
                 (error, period) ->
                     new ConnectionTimeoutException("No connection within " + period, error))
             .build();
-    Publisher<StompFrame> connectionExpectation =
+    Publisher<T> connectionExpectation =
         connectionExpectationFactory.apply(context.getConnectionExpectationProcessor(), connected);
 
-    Flux<StompFrame> connectedWithExpectations =
+    Flux<T> connectedWithExpectations =
         connected
             .mergeWith(connectionExpectation)
             .mergeWith(heartbeatExpectations)
@@ -326,7 +344,7 @@ public class RobustWebSocketFluxClient {
             .share()
             .log("connectedWithExpectations", Level.INFO);
 
-    Flux<StompFrame> connectedBase =
+    Flux<T> connectedBase =
         base.mergeWith(connectedWithExpectations.filter(value -> false))
             .log("connectedBase", Level.INFO);
 
@@ -361,7 +379,7 @@ public class RobustWebSocketFluxClient {
   }
 
   protected Mono<Void> connect(
-      FluxSink<StompFrame> streamRequestSink,
+      FluxSink<T> streamRequestSink,
       SwitchableProcessor<Duration> connectionExpectationProcessor) {
     Duration connectionTimeout = doConnect.apply(streamRequestSink);
     expectConnectionWithin(connectionExpectationProcessor.getSink(), connectionTimeout);
@@ -369,8 +387,8 @@ public class RobustWebSocketFluxClient {
   }
 
   protected Mono<Void> disconnect(
-      Publisher<StompFrame> response,
-      FluxSink<StompFrame> streamRequestSink,
+      Publisher<T> response,
+      FluxSink<T> streamRequestSink,
       FluxSink<Duration> receiptExpectationSink) {
     disconnect(streamRequestSink, receiptExpectationSink);
 
@@ -382,8 +400,8 @@ public class RobustWebSocketFluxClient {
   }
 
   protected void disconnect(
-      FluxSink<StompFrame> streamRequestSink, FluxSink<Duration> receiptExpectationSink) {    
-    Optional<StompFrame> disconnectFrame = buildDisconnectFrame.get();
+      FluxSink<T> streamRequestSink, FluxSink<Duration> receiptExpectationSink) {    
+    Optional<T> disconnectFrame = buildDisconnectFrame.get();
     log.info("Disconnecting...");    
     if (disconnectFrame.isPresent()) {
       receiptExpectationSink.next(disconnectionReceiptTimeout);
@@ -391,7 +409,7 @@ public class RobustWebSocketFluxClient {
     }
   }
 
-  protected StompFrame handleErrorFrame(StompFrame frame) throws RemoteStreamException {  
+  protected T handleErrorFrame(T frame) throws RemoteStreamException {  
     Optional<Throwable> error = decodeErrorFrame.apply(frame);
     if (error.isPresent()) {
       throw new RemoteStreamException("Remote stream encountered error", error.get());
@@ -399,15 +417,15 @@ public class RobustWebSocketFluxClient {
     return frame;
   }
 
-  protected void sendErrorFrame(Throwable error, FluxSink<StompFrame> streamRequestSink) {
-    Optional<StompFrame> errorFrame = buildErrorFrame.apply(error);
+  protected void sendErrorFrame(Throwable error, FluxSink<T> streamRequestSink) {
+    Optional<T> errorFrame = buildErrorFrame.apply(error);
     if (errorFrame.isPresent()) {
       streamRequestSink.next(errorFrame.get());
     }
   }
 
-  protected Publisher<StompFrame> sendHeartbeats(
-      Duration frequency, FluxSink<StompFrame> streamRequestSink) {
+  protected Publisher<T> sendHeartbeats(
+      Duration frequency, FluxSink<T> streamRequestSink) {
     log.info("Sending heartbeats every " + frequency.toString());
     if (frequency.isZero()) {
       return Flux.empty();
@@ -421,7 +439,7 @@ public class RobustWebSocketFluxClient {
               if (optionalHeartbeat.isPresent()) {
                 streamRequestSink.next(optionalHeartbeat.get());
               }
-              return Mono.<StompFrame>empty();
+              return Mono.<T>empty();
             })
         .log("heartbeats", Level.INFO);
   }
@@ -452,12 +470,12 @@ public class RobustWebSocketFluxClient {
   }
 
   protected String subscribeDestination(
-      String destination, FluxSink<StompFrame> streamRequestSinkRef) {
+      String destination, FluxSink<T> streamRequestSinkRef) {
     log.info("Subscribing to destination " + destination);
     int subscriptionNumber = maxSubscriptionNumber.getAndIncrement();
     String subscriptionId = MessageFormat.format("sub-{0}", subscriptionNumber);
 
-    Optional<StompFrame> subscribeFrame = 
+    Optional<T> subscribeFrame = 
         buildSubscribeFrame.apply(destination, subscriptionId);
     if (subscribeFrame.isPresent()) {
       streamRequestSinkRef.next(subscribeFrame.get());
@@ -465,7 +483,7 @@ public class RobustWebSocketFluxClient {
     return subscriptionId;
   }
 
-  protected void resubscribeAll(FluxSink<StompFrame> streamRequestSinkRef) {
+  protected void resubscribeAll(FluxSink<T> streamRequestSinkRef) {
     log.info("Resubscribing to everything");
     subscriptionDestinationIdMap.replaceAll(
         (dest, id) -> subscribeDestination(dest, streamRequestSinkRef));
@@ -478,10 +496,10 @@ public class RobustWebSocketFluxClient {
    * @param minMessageFrequency Unsubscribe if no message received in this time
    * @return A flux of messages on that channel
    */
-  public Flux<StompFrame> subscribe(
+  public Flux<T> subscribe(
       String destination, Duration minMessageFrequency) {
     // Drain the subscription only once
-    Consumer<FluxSink<StompFrame>> doAfterSharedStreamSubscribe =
+    Consumer<FluxSink<T>> doAfterSharedStreamSubscribe =
         sink -> {
           log.info("Subscribing to " + destination);
           subscriptionDestinationIdMap.computeIfAbsent(
@@ -491,7 +509,7 @@ public class RobustWebSocketFluxClient {
     return getSharedStreamContext(doAfterSharedStreamSubscribe)
         .flatMap(
             sharedStreamContext ->
-                Flux.<StompFrame, SharedStreamContext>usingWhen(
+                Flux.<T, SharedStreamContext<T>>usingWhen(
                     Mono.fromSupplier(() -> sharedStreamContext),
                     context ->
                         subscribe(context, destination, minMessageFrequency)
@@ -500,8 +518,8 @@ public class RobustWebSocketFluxClient {
         .log("outerSubscribe", Level.INFO);
   }
 
-  protected Flux<StompFrame> subscribe(
-      SharedStreamContext context,
+  protected Flux<T> subscribe(
+      SharedStreamContext<T> context,
       String destination,
       Duration minMessageFrequency) {
     return context
@@ -527,11 +545,11 @@ public class RobustWebSocketFluxClient {
             .log("innerSubscribe", Level.INFO);
   }
 
-  protected void unsubscribe(String destination, FluxSink<StompFrame> streamRequestSink) {
+  protected void unsubscribe(String destination, FluxSink<T> streamRequestSink) {
     subscriptionDestinationIdMap.computeIfPresent(
         destination,
         (dest, subscriptionId) -> {
-          Optional<StompFrame> unsubscribeFrame = 
+          Optional<T> unsubscribeFrame = 
               buildUnsubscribeFrame.apply(subscriptionId);
           if (unsubscribeFrame.isPresent()) {
             streamRequestSink.next(unsubscribeFrame.get());
@@ -541,7 +559,7 @@ public class RobustWebSocketFluxClient {
   }
 
   @Value
-  private static class ResponseContext {
+  private static class ResponseContext<T> {
     protected final FluxSink<Long> beforeOpenSignalSink;
 
     protected final FluxSink<Long> connectedSignalSink;
@@ -550,7 +568,7 @@ public class RobustWebSocketFluxClient {
 
     protected final SwitchableProcessor<Duration> connectionExpectationProcessor;
 
-    protected final SwitchableProcessor<StompFrame> streamRequestProcessor;
+    protected final SwitchableProcessor<T> streamRequestProcessor;
 
     protected final SwitchableProcessor<Duration> heartbeatExpectationProcessor;
 
@@ -560,20 +578,20 @@ public class RobustWebSocketFluxClient {
   }
 
   @Value
-  private static class BaseStreamContext {
-    protected final ResponseContext responseContext;
+  private static class BaseStreamContext<T> {
+    protected final ResponseContext<T> responseContext;
 
     protected final Duration heartbeatSendFrequency;
 
     protected final Duration heartbeatReceiveFrequency;
 
-    protected final Flux<StompFrame> stream;
+    protected final Flux<T> stream;
   }
 
   @Value
-  private static class SharedStreamContext {
-    protected final BaseStreamContext baseStreamContext;
+  private static class SharedStreamContext<T> {
+    protected final BaseStreamContext<T> baseStreamContext;
 
-    protected final Flux<StompFrame> sharedStream;
+    protected final Flux<T> sharedStream;
   }
 }
