@@ -26,7 +26,7 @@ import reactor.core.scheduler.Schedulers;
 
 @Log
 @Builder
-public class SockJsFluxClient {
+public class OldSockJsFluxClient {
   private final WebSocketClient webSocketClient;
   private final SockJsUrlInfo sockJsUrlInfo;
   private final Mono<HttpHeaders> webSocketHeadersProvider;

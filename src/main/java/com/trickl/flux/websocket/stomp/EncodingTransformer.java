@@ -9,14 +9,14 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 @RequiredArgsConstructor
-public class EncodingTransformer<T> implements Function<Publisher<T>, Flux<byte[]>> {
+public class EncodingTransformer<T, S> implements Function<Publisher<T>, Flux<S>> {
 
-  private final ThrowingFunction<T, byte[], ? extends Exception> encoder;
+  private final ThrowingFunction<T, S, ? extends Exception> encoder;
 
   @Override
-  public Flux<byte[]> apply(Publisher<T> source) {
-    ThrowableMapper<T, byte[]> mapper = 
-        new ThrowableMapper<T, byte[]>(encoder);
+  public Flux<S> apply(Publisher<T> source) {
+    ThrowableMapper<T, S> mapper = 
+        new ThrowableMapper<T, S>(encoder);
     return Flux.from(source).flatMap(frame -> {
       return frame == null ? Mono.empty() : mapper.apply(frame);
     });

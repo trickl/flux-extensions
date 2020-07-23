@@ -37,6 +37,7 @@ import lombok.Value;
 import lombok.extern.java.Log;
 import org.reactivestreams.Publisher;
 import org.springframework.http.HttpHeaders;
+import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.client.WebSocketClient;
 import reactor.core.publisher.EmitterProcessor;
 import reactor.core.publisher.Flux;
@@ -45,10 +46,12 @@ import reactor.core.publisher.Mono;
 
 @Log
 @Builder
-public class RobustWebSocketFluxClient<T> {
+public class RobustWebSocketFluxClient<S, T> {
   private final WebSocketClient webSocketClient;
 
   @Getter private final Supplier<URI> transportUriProvider;
+
+  @Getter private final BiFunction<FluxSink<S>, Publisher<S>, WebSocketHandler> handlerFactory;
 
   @Builder.Default private Supplier<HttpHeaders> webSocketHeadersProvider = HttpHeaders::new;
 
@@ -106,10 +109,10 @@ public class RobustWebSocketFluxClient<T> {
       (T frame) -> Optional.empty();
 
   @Builder.Default
-  ThrowingFunction<T, byte[], IOException> encoder = frame -> new byte[] {};
+  ThrowingFunction<T, S, IOException> encoder = frame -> null;
 
   @Builder.Default
-  ThrowingFunction<byte[], List<T>, IOException> decoder = bytes -> Collections.emptyList();
+  ThrowingFunction<S, List<T>, IOException> decoder = bytes -> Collections.emptyList();
 
   private final AtomicInteger maxSubscriptionNumber = new AtomicInteger(0);
 
@@ -261,24 +264,24 @@ public class RobustWebSocketFluxClient<T> {
         Flux.merge(Flux.from(context.getStreamRequestProcessor()))
             .log("sendWithResponse", Level.FINE);
 
-    WebSocketFluxClient<byte[]> webSocketFluxClient =
-         WebSocketFluxClient.<byte[]>builder()
+    WebSocketFluxClient<S> webSocketFluxClient =
+         WebSocketFluxClient.<S>builder()
             .webSocketClient(webSocketClient)
             .transportUriProvider(transportUriProvider)
-            .handlerFactory(BinaryWebSocketHandler::new)
+            .handlerFactory(handlerFactory)
             .webSocketHeadersProvider(Mono.fromSupplier(webSocketHeadersProvider))        
             .doBeforeOpen(doBeforeSessionOpen.then(
                 Mono.fromRunnable(() -> context.getBeforeOpenSignalSink().next(1L))))
             .doAfterOpen(
                 sink ->
-                connect(new FluxSinkAdapter<T, byte[], IOException>(sink, encoder), 
+                connect(new FluxSinkAdapter<T, S, IOException>(sink, encoder), 
                 context.getConnectionExpectationProcessor()))
             .doBeforeClose(response -> Mono.delay(Duration.ofMillis(500)).then())
             .doAfterClose(doAfterSessionClose)
             .build();
 
-    DecodingTransformer<T> inputTransformer = new DecodingTransformer<T>(decoder);
-    EncodingTransformer<T> outputTransformer = new EncodingTransformer<T>(encoder);
+    DecodingTransformer<S, T> inputTransformer = new DecodingTransformer<S, T>(decoder);
+    EncodingTransformer<T, S> outputTransformer = new EncodingTransformer<T, S>(encoder);
 
     Flux<T> base =
         Flux.defer(() -> inputTransformer.apply(

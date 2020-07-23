@@ -2,6 +2,7 @@ package com.trickl.flux.websocket.stomp;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trickl.flux.mappers.ThrowableMapper;
+import com.trickl.flux.websocket.BinaryWebSocketHandler;
 import com.trickl.flux.websocket.RobustWebSocketFluxClient;
 import com.trickl.flux.websocket.stomp.frames.StompConnectFrame;
 import com.trickl.flux.websocket.stomp.frames.StompConnectedFrame;
@@ -27,7 +28,7 @@ import reactor.core.publisher.Mono;
 
 @Log
 public class StompFluxClient {
-  private final RobustWebSocketFluxClient<StompFrame> robustWebSocketFluxClient;
+  private final RobustWebSocketFluxClient<byte[], StompFrame> robustWebSocketFluxClient;
 
   private Duration connectionTimeout = Duration.ofSeconds(3);
 
@@ -52,11 +53,12 @@ public class StompFluxClient {
       Mono<Void> doBeforeSessionOpen,
       Mono<Void> doAfterSessionClose,
       int maxRetries) {
-    RobustWebSocketFluxClient.RobustWebSocketFluxClientBuilder<StompFrame>
+    RobustWebSocketFluxClient.RobustWebSocketFluxClientBuilder<byte[], StompFrame>
         robustWebSocketFluxClientBuilder =
-        RobustWebSocketFluxClient.<StompFrame>builder()
+        RobustWebSocketFluxClient.<byte[], StompFrame>builder()
             .webSocketClient(webSocketClient)
             .transportUriProvider(transportUriProvider)
+            .handlerFactory(BinaryWebSocketHandler::new)
             .isConnectedFrame(this::isConnectedFrame)
             .isDataFrameForDestination(this::isDataFrameForDestination)
             .getHeartbeatSendFrequencyCallback(this::getHeartbeatSendFrequency)
