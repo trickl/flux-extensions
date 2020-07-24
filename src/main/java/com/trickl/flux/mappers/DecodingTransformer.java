@@ -1,7 +1,5 @@
-package com.trickl.flux.websocket.stomp;
+package com.trickl.flux.mappers;
 
-import com.trickl.flux.mappers.ThrowableMapper;
-import com.trickl.flux.mappers.ThrowingFunction;
 import java.util.List;
 import java.util.function.Function;
 import lombok.RequiredArgsConstructor;

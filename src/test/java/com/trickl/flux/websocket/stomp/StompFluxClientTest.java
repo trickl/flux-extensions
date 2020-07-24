@@ -3,11 +3,8 @@ package com.trickl.flux.websocket.stomp;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trickl.flux.config.WebSocketConfiguration;
 import com.trickl.flux.websocket.MockServerWithWebSocket;
-
 import java.io.IOException;
-import java.sql.Connection;
 import java.time.Duration;
-import java.util.logging.Level;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -18,7 +15,6 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.web.reactive.socket.client.ReactorNettyWebSocketClient;
 import org.springframework.web.reactive.socket.client.WebSocketClient;
-
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;

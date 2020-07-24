@@ -1,8 +1,7 @@
 package com.trickl.flux.websocket.sockjs;
 
 import com.trickl.exceptions.AbnormalTerminationException;
-import com.trickl.flux.websocket.sockjs.frames.SockJsClose;
-import com.trickl.flux.websocket.sockjs.frames.SockJsFrame;
+import com.trickl.flux.websocket.sockjs.frames.SockJsCloseFrame;
 import java.text.MessageFormat;
 import java.util.function.Function;
 import lombok.extern.java.Log;
@@ -17,9 +16,9 @@ public class SockJsAbnormalCloseProcessor
 
   @Override
   public Publisher<SockJsFrame> apply(SockJsFrame frame) {
-    if (SockJsClose.class.equals(frame.getClass())) {
-      SockJsClose closeMessage = (SockJsClose) frame;
-      CloseStatus closeStatus = closeMessage.getStatus();
+    if (SockJsCloseFrame.class.equals(frame.getClass())) {
+      SockJsCloseFrame closeMessage = (SockJsCloseFrame) frame;
+      CloseStatus closeStatus = closeMessage.getCloseStatus();
       if (closeStatus != CloseStatus.NORMAL) {
         String errorMessage = MessageFormat.format(
             "Unexpected SockJS Close ({0}) - {1}", 

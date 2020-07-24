@@ -4,11 +4,10 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trickl.flux.mappers.ThrowableMapper;
 import com.trickl.flux.retry.ExponentialBackoffRetry;
-import com.trickl.flux.websocket.sockjs.frames.SockJsClose;
-import com.trickl.flux.websocket.sockjs.frames.SockJsFrame;
-import com.trickl.flux.websocket.sockjs.frames.SockJsHeartbeat;
-import com.trickl.flux.websocket.sockjs.frames.SockJsMessage;
-import com.trickl.flux.websocket.sockjs.frames.SockJsOpen;
+import com.trickl.flux.websocket.sockjs.frames.SockJsCloseFrame;
+import com.trickl.flux.websocket.sockjs.frames.SockJsHeartbeatFrame;
+import com.trickl.flux.websocket.sockjs.frames.SockJsMessageFrame;
+import com.trickl.flux.websocket.sockjs.frames.SockJsOpenFrame;
 import java.io.IOException;
 import java.text.MessageFormat;
 import java.time.Duration;
@@ -83,21 +82,21 @@ public class OldSockJsFluxClient {
   protected SockJsFrame read(String message) throws IOException {
     // Handle sockJs messages
     if (message.startsWith(RawSockJsFluxClient.SOCK_JS_OPEN)) {
-      return new SockJsOpen();
+      return SockJsOpenFrame.builder().build();
     } else if (message.startsWith(RawSockJsFluxClient.SOCK_JS_HEARTBEAT)) {
-      return new SockJsHeartbeat();
+      return SockJsHeartbeatFrame.builder().build();
     } else if (message.startsWith(RawSockJsFluxClient.SOCK_JS_CLOSE)) {
       int code = Integer.parseInt(message.substring(
           RawSockJsFluxClient.SOCK_JS_CLOSE.length()));
-      return new SockJsClose(new CloseStatus(code));
+      return SockJsCloseFrame.builder().closeStatus(new CloseStatus(code)).build();
     }
 
-    return new SockJsMessage(message);
+    return SockJsMessageFrame.builder().message(message).build();
   }
 
   protected String write(SockJsFrame request) throws JsonProcessingException {
-    if (request.getClass().equals(SockJsMessage.class)) {
-      return ((SockJsMessage) request).getPayload();
+    if (request.getClass().equals(SockJsMessageFrame.class)) {
+      return ((SockJsMessageFrame) request).getMessage();
     }
     String errorMessage = MessageFormat.format("Sending {0} is not supported.", request.getClass());
     throw new UnsupportedOperationException(errorMessage);
