@@ -118,8 +118,6 @@ public class RobustWebSocketFluxClient<S, T> {
 
   private final Map<String, String> subscriptionDestinationIdMap = new HashMap<>();
 
-  private static final double HEARTBEAT_PERCENTAGE_TOLERANCE = 1.5;
-
   protected ResponseContext<T> createResponseContext() {
     log.info("Creating response context");
     EmitterProcessor<Long> beforeOpenSignalEmitter = EmitterProcessor.create();
@@ -188,14 +186,7 @@ public class RobustWebSocketFluxClient<S, T> {
             .doOnSubscribe(
                 sub -> {
                   if (!context.getHeartbeatReceiveFrequency().isZero()) {
-                    Duration heartbeatExpectation =
-                        context
-                            .getHeartbeatReceiveFrequency()
-                            .plus(
-                                context
-                                    .getHeartbeatReceiveFrequency()
-                                    .multipliedBy((long) (HEARTBEAT_PERCENTAGE_TOLERANCE * 100))
-                                    .dividedBy(100));
+                    Duration heartbeatExpectation = context.getHeartbeatReceiveFrequency();
                     expectHeartbeatsEvery(
                         context.getResponseContext().getHeartbeatExpectationProcessor().getSink(),
                         heartbeatExpectation);

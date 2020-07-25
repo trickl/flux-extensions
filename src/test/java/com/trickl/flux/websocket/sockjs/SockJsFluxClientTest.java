@@ -1,4 +1,4 @@
-package com.trickl.flux.websocket.stomp;
+package com.trickl.flux.websocket.sockjs;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trickl.flux.config.WebSocketConfiguration;
@@ -22,27 +22,17 @@ import reactor.test.StepVerifier;
 @ActiveProfiles({"unittest"})
 @TestPropertySource(properties = { "spring.config.location=classpath:application.yml" })
 @SpringBootTest(classes = WebSocketConfiguration.class)
-public class StompFluxClientTest {
+public class SockJsFluxClientTest {
 
   @Autowired ObjectMapper objectMapper = new ObjectMapper();
 
   private Subscription subscription;
 
-  private static final Pattern STOMP_CONNECT_PATTERN = Pattern.compile("CONNECT.*", Pattern.DOTALL);
-  private static final Pattern STOMP_HEARTBEAT_PATTERN = Pattern.compile("\\s*", Pattern.DOTALL);
-  private static final Pattern STOMP_SUBSCRIBE_PATTERN = 
-      Pattern.compile("SUBSCRIBE.*", Pattern.DOTALL);
-
-  //private static final Pattern STOMP_UNSUBSCRIBE_PATTERN = 
-  //    Pattern.compile("UNSUBSCRIBE.*", Pattern.DOTALL);
-  //private static final Pattern STOMP_ERROR_PATTERN = 
-  //    Pattern.compile("ERROR.*", Pattern.DOTALL);
-  //private static final Pattern STOMP_DISCONNECT_PATTERN 
-  //    = Pattern.compile("DISCONNECT.*", Pattern.DOTALL);
-  private static final String STOMP_CONNECTED_MESSAGE = 
-      "CONNECTED\nversion:1.2\nheart-beat:3000,3000\n\n\u0000";
-  //private static final String STOMP_RECEIPT_MESSAGE = 
-  //    "RECEIPT\nreceipt-id:message-12345\n\n\u0000";
+  private static final Pattern SOCKJS_HEARTBEAT_PATTERN = Pattern.compile("h", Pattern.DOTALL);
+  //private static final Pattern SOCKJS_SUBSCRIBE_PATTERN = 
+  //    Pattern.compile("SUBSCRIBE.*", Pattern.DOTALL);
+  private static final String SOCKJS_CONNECTED_MESSAGE = 
+      "o";
 
   @BeforeEach
   private void setup() {      
@@ -76,28 +66,26 @@ public class StompFluxClientTest {
 
     mockServer.beginVerifier()
         .thenWaitServerStartThenUpgrade()
-        .thenExpectOpen()
-        .thenExpectMessage(STOMP_CONNECT_PATTERN)
+        .thenExpectOpen()        
         .thenExpectClose()
         .thenWaitServerShutdown()
         .thenWaitServerStartThenUpgrade()
-        .thenExpectOpen()        
-        .thenExpectMessage(STOMP_CONNECT_PATTERN)
+        .thenExpectOpen()                
         .thenExpectClose()
         .thenWaitServerShutdown()
         .thenWaitServerStartThenUpgrade()    
-        .thenExpectOpen()        
-        .thenExpectMessage(STOMP_CONNECT_PATTERN)
+        .thenExpectOpen()                
         .thenExpectClose()
         .thenWaitServerShutdown()
         .thenVerify(); 
 
     WebSocketClient client = new ReactorNettyWebSocketClient();
-    StompFluxClient stompClient =
-        StompFluxClient.builder()
+    SockJsFluxClient sockJsClient =
+        SockJsFluxClient.builder()
         .webSocketClient(client)
         .transportUriProvider(mockServer::getWebSocketUri)
         .connectionTimeout(Duration.ofSeconds(1))
+        .objectMapper(objectMapper)
         .doBeforeSessionOpen(Mono.defer(() -> {
           mockServer.start();          
           return Mono.delay(Duration.ofMillis(500)).then();
@@ -106,7 +94,7 @@ public class StompFluxClientTest {
         .doAfterSessionClose(Mono.defer(() -> shutdown(mockServer)))
         .build();
 
-    Flux<String> output = stompClient.subscribe(
+    Flux<String> output = sockJsClient.subscribe(
         "/messages", String.class, Duration.ofMinutes(30));
 
     StepVerifier.create(output)
@@ -123,51 +111,45 @@ public class StompFluxClientTest {
     mockServer.beginVerifier()
         .thenWaitServerStartThenUpgrade(Duration.ofMinutes(5))
         .thenExpectOpen(Duration.ofMinutes(5))
-        .thenExpectMessage(STOMP_CONNECT_PATTERN, Duration.ofMinutes(5))
-        .thenSend(STOMP_CONNECTED_MESSAGE)        
-        .thenExpectMessage(STOMP_SUBSCRIBE_PATTERN, Duration.ofMinutes(5))
-        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN, Duration.ofMinutes(5))
-        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN, Duration.ofMinutes(5))
-        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN, Duration.ofMinutes(5))
-        //.thenExpectMessage(STOMP_DISCONNECT_PATTERN, Duration.ofMinutes(5))
-        //.thenSend(STOMP_RECEIPT_MESSAGE)
+        .thenSend(SOCKJS_CONNECTED_MESSAGE)        
+        .thenExpectMessage(SOCKJS_HEARTBEAT_PATTERN, Duration.ofMinutes(5))
+        .thenExpectMessage(SOCKJS_HEARTBEAT_PATTERN, Duration.ofMinutes(5))
+        .thenExpectMessage(SOCKJS_HEARTBEAT_PATTERN, Duration.ofMinutes(5))
+        //.thenExpectMessage(SOCKJS_DISCONNECT_PATTERN, Duration.ofMinutes(5))
+        //.thenSend(SOCKJS_RECEIPT_MESSAGE)
         .thenExpectClose()
         .thenWaitServerShutdown()
         .thenWaitServerStartThenUpgrade()
         .thenExpectOpen()        
-        .thenExpectMessage(STOMP_CONNECT_PATTERN)
-        .thenSend(STOMP_CONNECTED_MESSAGE)
-        .thenExpectMessage(STOMP_SUBSCRIBE_PATTERN)
-        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
-        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
-        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)     
-        //.thenExpectMessage(STOMP_DISCONNECT_PATTERN)
-        //.thenSend(STOMP_RECEIPT_MESSAGE)
+        .thenSend(SOCKJS_CONNECTED_MESSAGE)
+        .thenExpectMessage(SOCKJS_HEARTBEAT_PATTERN)
+        .thenExpectMessage(SOCKJS_HEARTBEAT_PATTERN)
+        .thenExpectMessage(SOCKJS_HEARTBEAT_PATTERN)     
+        //.thenExpectMessage(SOCKJS_DISCONNECT_PATTERN)
+        //.thenSend(SOCKJS_RECEIPT_MESSAGE)
         .thenExpectClose()
         .thenWaitServerShutdown()
         .thenWaitServerStartThenUpgrade()    
         .thenExpectOpen()        
-        .thenExpectMessage(STOMP_CONNECT_PATTERN)
-        .thenSend(STOMP_CONNECTED_MESSAGE)                
-        .thenExpectMessage(STOMP_SUBSCRIBE_PATTERN)
-        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
-        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
-        .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
-        //.thenExpectMessage(STOMP_DISCONNECT_PATTERN)
-        //.thenSend(STOMP_RECEIPT_MESSAGE)
+        .thenSend(SOCKJS_CONNECTED_MESSAGE)         
+        .thenExpectMessage(SOCKJS_HEARTBEAT_PATTERN)
+        .thenExpectMessage(SOCKJS_HEARTBEAT_PATTERN)
+        .thenExpectMessage(SOCKJS_HEARTBEAT_PATTERN)
+        //.thenExpectMessage(SOCKJS_DISCONNECT_PATTERN)
+        //.thenSend(SOCKJS_RECEIPT_MESSAGE)
         .thenExpectClose()
         .thenWaitServerShutdown()
         .thenVerify(); 
 
     WebSocketClient client = new ReactorNettyWebSocketClient();
-    StompFluxClient stompClient =
-        StompFluxClient.builder()
+    SockJsFluxClient sockJsClient =
+        SockJsFluxClient.builder()
         .webSocketClient(client)
         .transportUriProvider(mockServer::getWebSocketUri)
+        .objectMapper(objectMapper)
         .connectionTimeout(Duration.ofSeconds(15))
-        .heartbeatReceiveFrequency(Duration.ofSeconds(3))
-        //.connectionTimeout(Duration.ofMinutes(5))
-        //.heartbeatReceiveFrequency(Duration.ofMinutes(5))
+        .heartbeatReceiveFrequency(Duration.ofMillis(7500))
+        .heartbeatSendFrequency(Duration.ofSeconds(3))
         .maxRetries(2)
         .doBeforeSessionOpen(Mono.defer(() -> {
           mockServer.start();          
@@ -176,7 +158,7 @@ public class StompFluxClientTest {
         .doAfterSessionClose(Mono.defer(() -> shutdown(mockServer)))
         .build();
 
-    Flux<String> output = stompClient.subscribe(
+    Flux<String> output = sockJsClient.subscribe(
         "/messages", String.class, Duration.ofMinutes(30));
 
     StepVerifier.create(output)

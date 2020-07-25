@@ -113,11 +113,11 @@ public class SockJsFluxClient {
   }
 
   protected Duration getHeartbeatSendFrequency(SockJsFrame connectedFrame) {
-    return Duration.ofSeconds(3);
+    return heartbeatSendFrequency;
   }
 
   protected Duration getHeartbeatReceiveFrequency(SockJsFrame connectedFrame) {
-    return Duration.ofSeconds(10);
+    return heartbeatReceiveFrequency;
   }
 
   protected <T> T decodeDataFrame(SockJsFrame frame, Class<T> messageType)
@@ -134,12 +134,6 @@ public class SockJsFluxClient {
   }
 
   protected Duration doConnect(FluxSink<SockJsFrame> streamRequestSink) {
-    log.fine("Sending SockJs Connection Frame");
-    SockJsOpenFrame connectFrame =
-        SockJsOpenFrame.builder()
-            .build();
-    streamRequestSink.next(connectFrame);
-
     return connectionTimeout;
   }
 

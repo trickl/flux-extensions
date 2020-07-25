@@ -38,6 +38,8 @@ public class StompFluxClient {
 
   private ObjectMapper objectMapper = new ObjectMapper();
 
+  private static final double HEARTBEAT_RECEIVE_TOLERANCE = 1.5;
+
   @Builder
   StompFluxClient(
       WebSocketClient webSocketClient,
@@ -125,7 +127,12 @@ public class StompFluxClient {
   }
 
   protected Duration getHeartbeatReceiveFrequency(StompFrame connectedFrame) {
-    return ((StompConnectedFrame) connectedFrame).getHeartbeatReceiveFrequency();
+    Duration expectedReceivedFrequency = 
+        ((StompConnectedFrame) connectedFrame).getHeartbeatReceiveFrequency();
+    return expectedReceivedFrequency
+        .plus(expectedReceivedFrequency
+          .multipliedBy((long) (HEARTBEAT_RECEIVE_TOLERANCE * 100))
+          .dividedBy(100));
   }
 
   protected <T> T decodeDataFrame(StompFrame frame, Class<T> messageType)
