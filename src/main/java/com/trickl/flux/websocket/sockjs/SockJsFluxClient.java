@@ -1,6 +1,7 @@
 package com.trickl.flux.websocket.sockjs;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.trickl.exceptions.AbnormalTerminationException;
 import com.trickl.flux.mappers.ThrowableMapper;
 import com.trickl.flux.websocket.RobustWebSocketFluxClient;
 import com.trickl.flux.websocket.TextWebSocketHandler;
@@ -10,6 +11,7 @@ import com.trickl.flux.websocket.sockjs.frames.SockJsMessageFrame;
 import com.trickl.flux.websocket.sockjs.frames.SockJsOpenFrame;
 import java.io.IOException;
 import java.net.URI;
+import java.text.MessageFormat;
 import java.time.Duration;
 import java.util.Optional;
 import java.util.function.Supplier;
@@ -62,6 +64,7 @@ public class SockJsFluxClient {
             .doConnect(this::doConnect)
             .buildDisconnectFrame(this::buildDisconnectFrame)
             .buildHeartbeatFrame(this::buildHeartbeatFrame)
+            .decodeErrorFrame(this::decodeErrorFrame)
             .encoder(new SockJsFrameEncoder(objectMapper))
             .decoder(new SockJsFrameDecoder(objectMapper));
 
@@ -125,6 +128,21 @@ public class SockJsFluxClient {
     return objectMapper.readValue(((SockJsMessageFrame) frame).getMessage(), messageType);
   }
 
+  protected Optional<Throwable> decodeErrorFrame(SockJsFrame frame) {
+    if (frame instanceof SockJsCloseFrame) {
+      CloseStatus closeStatus = ((SockJsCloseFrame) frame).getCloseStatus();
+      if (!CloseStatus.NORMAL.equals(closeStatus)) {
+        String errorMessage = MessageFormat.format(
+            "Unexpected SockJS Close ({0}) - {1}", 
+            closeStatus.getCode(), closeStatus.getReason());
+        log.warning(errorMessage);
+        
+        return Optional.of(new AbnormalTerminationException(errorMessage));
+      }
+    }
+    return Optional.empty();                
+  }
+
   protected Optional<SockJsFrame> buildDisconnectFrame() {
     return Optional.of(SockJsCloseFrame.builder().closeStatus(CloseStatus.NORMAL).build());
   }
@@ -138,15 +156,15 @@ public class SockJsFluxClient {
   }
 
   /**
-   * Subscribe to a destination.
+   * Get a flux for a destination.
    *
    * @param destination The destination channel
    * @param minMessageFrequency Unsubscribe if no message received in this time
    * @return A flux of messages on that channel
    */
-  public <T> Flux<T> subscribe(
+  public <T> Flux<T> get(
       String destination, Class<T> messageType, Duration minMessageFrequency) {
-    return robustWebSocketFluxClient.subscribe(destination, minMessageFrequency)    
+    return robustWebSocketFluxClient.get(destination, minMessageFrequency)    
         .flatMap(new ThrowableMapper<>(frame -> decodeDataFrame(frame, messageType)));
   }
 }

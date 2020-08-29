@@ -94,7 +94,7 @@ public class SockJsFluxClientTest {
         .doAfterSessionClose(Mono.defer(() -> shutdown(mockServer)))
         .build();
 
-    Flux<String> output = sockJsClient.subscribe(
+    Flux<String> output = sockJsClient.get(
         "/messages", String.class, Duration.ofMinutes(30));
 
     StepVerifier.create(output)
@@ -158,7 +158,7 @@ public class SockJsFluxClientTest {
         .doAfterSessionClose(Mono.defer(() -> shutdown(mockServer)))
         .build();
 
-    Flux<String> output = sockJsClient.subscribe(
+    Flux<String> output = sockJsClient.get(
         "/messages", String.class, Duration.ofMinutes(30));
 
     StepVerifier.create(output)

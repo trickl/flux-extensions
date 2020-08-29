@@ -31,19 +31,24 @@ public class SwitchableProcessor<T> implements Publisher<T> {
    * Create a switchable processor.
    */
   public static <T> SwitchableProcessor<T> create(Publisher<?> switchSignal, String name) {
-    FluxSinkRef<T> sinkRef = new FluxSinkRef<>();
-
-    Flux<T> publisher = createSwitchablePublisherAndSink(
-        switchSignal, sinkRef, name).share();
-    Disposable subscription = publisher.subscribe();
-
-    return new SwitchableProcessor<>(
-        publisher,
-        sinkRef,
-        subscription);
+    return create(switchSignal, 0, name);
   }
 
-  public FluxSink<T> getSink() {
+  /**
+   * Create a switchable processor.
+   */
+  public static <T> SwitchableProcessor<T> create(
+      Publisher<?> switchSignal, int history, String name) {
+    FluxSinkRef<T> sinkRef = new FluxSinkRef<>();
+
+    Flux<T> publisher = createSwitchablePublisherAndSink(switchSignal, sinkRef, name)
+        .log(name).replay(history).refCount();
+    Disposable subscription = publisher.subscribe();
+
+    return new SwitchableProcessor<>(publisher, sinkRef, subscription);
+  }
+
+  public FluxSink<T> sink() {
     return innerSinkRef.getSink();
   }
 
@@ -55,15 +60,16 @@ public class SwitchableProcessor<T> implements Publisher<T> {
   protected static <T> Flux<T> createSwitchablePublisherAndSink(
       Publisher<?> switchSignal, FluxSinkRef<T> sinkRef, String name) {
     log.info("Creating switchableProcessor - " + name);
-    Flux<Publisher<T>> mergedPublishers = Flux.from(switchSignal).map(signal -> {        
-      log.info("Switching switchableProcessor - " + name);
-      UnicastProcessor<T> nextEmitter =  UnicastProcessor.<T>create();
-      if (sinkRef.getSink() != null) {
-        sinkRef.getSink().complete();
-      }
-      sinkRef.setSink(nextEmitter.sink());
-      return nextEmitter;
-    });
+    Flux<Publisher<T>> mergedPublishers = Flux.from(switchSignal)
+        .cache(1).log("cachedSwitchSignal").map(signal -> {        
+          log.info("switchableProcessor received signal - " + name);
+          UnicastProcessor<T> nextEmitter =  UnicastProcessor.<T>create();
+          if (sinkRef.getSink() != null) {
+            sinkRef.getSink().complete();
+          }
+          sinkRef.setSink(nextEmitter.sink());
+          return nextEmitter;
+        });
 
     return Flux.switchOnNext(mergedPublishers);
   }

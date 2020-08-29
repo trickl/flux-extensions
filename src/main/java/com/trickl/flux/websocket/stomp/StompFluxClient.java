@@ -2,6 +2,7 @@ package com.trickl.flux.websocket.stomp;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trickl.flux.mappers.ThrowableMapper;
+import com.trickl.flux.routing.TopicSubscription;
 import com.trickl.flux.websocket.BinaryWebSocketHandler;
 import com.trickl.flux.websocket.RobustWebSocketFluxClient;
 import com.trickl.flux.websocket.stomp.frames.StompConnectFrame;
@@ -16,8 +17,11 @@ import com.trickl.flux.websocket.stomp.frames.StompUnsubscribeFrame;
 import java.io.IOException;
 import java.net.URI;
 import java.time.Duration;
+import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import lombok.Builder;
 import lombok.extern.java.Log;
 import org.springframework.http.HttpHeaders;
@@ -67,8 +71,8 @@ public class StompFluxClient {
             .getHeartbeatReceiveFrequencyCallback(this::getHeartbeatReceiveFrequency)
             .doConnect(this::doConnect)
             .buildDisconnectFrame(this::buildDisconnectFrame)
-            .buildSubscribeFrame(this::buildSubscribeFrame)
-            .buildUnsubscribeFrame(this::buildUnsubscribeFrame)
+            .buildSubscribeFrames(this::buildSubscribeFrames)
+            .buildUnsubscribeFrames(this::buildUnsubscribeFrames)
             .buildHeartbeatFrame(this::buildHeartbeatFrame)
             .buildErrorFrame(this::buildErrorFrame)
             .decodeErrorFrame(this::decodeErrorFrame)
@@ -151,17 +155,17 @@ public class StompFluxClient {
     return Optional.of(StompDisconnectFrame.builder().build());
   }
 
-  protected Optional<StompFrame> buildSubscribeFrame(String destination, String subscriptionId) {
-    return  Optional.of(StompSubscribeFrame.builder()
-    .destination(destination)
-    .subscriptionId(subscriptionId)
-    .build());
+  protected List<StompFrame> buildSubscribeFrames(Set<TopicSubscription> topics) {
+    return topics.stream().map(topic -> StompSubscribeFrame.builder()
+    .destination(topic.getTopic())
+    .subscriptionId(String.valueOf(topic.getId()))
+    .build()).collect(Collectors.toList());
   }
 
-  protected Optional<StompFrame> buildUnsubscribeFrame(String subscriptionId) {
-    return Optional.of(StompUnsubscribeFrame.builder()
-    .subscriptionId(subscriptionId)
-    .build());
+  protected List<StompFrame> buildUnsubscribeFrames(Set<TopicSubscription> topics) {
+    return topics.stream().map(topic -> StompUnsubscribeFrame.builder()
+    .subscriptionId(String.valueOf(topic.getId()))
+    .build()).collect(Collectors.toList());
   }
 
   protected Optional<StompFrame> buildHeartbeatFrame(Long count) {
@@ -188,15 +192,15 @@ public class StompFluxClient {
   }
 
   /**
-   * Subscribe to a destination.
+   * Get a flux for a destination.
    *
    * @param destination The destination channel
    * @param minMessageFrequency Unsubscribe if no message received in this time
    * @return A flux of messages on that channel
    */
-  public <T> Flux<T> subscribe(
+  public <T> Flux<T> get(
       String destination, Class<T> messageType, Duration minMessageFrequency) {
-    return robustWebSocketFluxClient.subscribe(destination, minMessageFrequency)    
+    return robustWebSocketFluxClient.get(destination, minMessageFrequency)    
         .flatMap(new ThrowableMapper<>(frame -> decodeDataFrame(frame, messageType)));
   }
 }
