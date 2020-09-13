@@ -31,14 +31,13 @@ public class TopicRouterTest {
     Flux<Integer> source = Flux.just(1, 2, 3, 4, 5);
 
     TopicRouter<Integer> topicRouter = TopicRouter.<Integer>builder()
-        .source(source)
         .topicFilter(topic -> "/evens".equals(topic)
             ? value -> value % 2 == 0
             : value -> value % 2 == 1)
         .build();
 
-    Flux<Integer> evensTopic = topicRouter.get("/evens");
-    Flux<Integer> oddsTopic = topicRouter.get("/odds");
+    Flux<Integer> evensTopic = topicRouter.route(source, "/evens");
+    Flux<Integer> oddsTopic = topicRouter.route(source, "/odds");
     
     StepVerifier.create(evensTopic)
         .expectNext(2)       
@@ -59,26 +58,26 @@ public class TopicRouterTest {
     Flux<Integer> source = Flux.just(1, 2, 3);
 
     TopicRouter<Integer> topicRouter = TopicRouter.<Integer>builder()
-        .source(source)
         .subscriptionThrottleDuration(Duration.ofMillis(100))
         .build();
 
     AtomicReference<Disposable> subASubscription = new AtomicReference<>();
     AtomicReference<Disposable> subBSubscription = new AtomicReference<>();
 
-    Publisher<Set<TopicSubscription>> subscriptions = topicRouter.getSubscriptions();
+    Publisher<Set<TopicSubscription>> subscriptions = Flux.from(topicRouter.getSubscriptions())
+        .log("subscriptions");
     
     StepVerifier.create(subscriptions)
         .then(() -> {        
           // Subscribe A
-          subASubscription.set(topicRouter.get("/sub-a").subscribe());
+          subASubscription.set(topicRouter.route(source, "/sub-a").subscribe());
         })
         .thenAwait(Duration.ofMillis(300)) // Wait beyond throttle
         .expectNextMatches(subs -> subs.equals(Collections.singleton(
           new TopicSubscription(1, "/sub-a"))))
         .then(() -> {
           // Now subscribe B
-          subBSubscription.set(topicRouter.get("/sub-b").subscribe());
+          subBSubscription.set(topicRouter.route(source, "/sub-b").subscribe());
         })            
         .expectNextMatches(subs -> subs.equals(Collections.singleton(
             new TopicSubscription(2, "/sub-b"))))
@@ -101,7 +100,6 @@ public class TopicRouterTest {
     FluxSink<Integer> disconnectedSink = connectedSignal.sink();
 
     TopicRouter<Integer> topicRouter = TopicRouter.<Integer>builder()
-        .source(source)
         .startConnected(false)
         .connectedSignal(connectedSignal) 
         .disconnectedSignal(disconnectedSignal)
@@ -116,12 +114,12 @@ public class TopicRouterTest {
     StepVerifier.create(subscriptions)
         .then(() -> {        
           // No subscription - not connected  
-          subASubscription.set(topicRouter.get("/sub-a").subscribe());
+          subASubscription.set(topicRouter.route(source, "/sub-a").subscribe());
         })
         .expectNoEvent(Duration.ofMillis(100))
         .then(() -> {
           // No subscription - not connected
-          subBSubscription.set(topicRouter.get("/sub-b").subscribe());
+          subBSubscription.set(topicRouter.route(source, "/sub-b").subscribe());
         })
         .expectNoEvent(Duration.ofMillis(100))
         .then(() -> connectedSink.next(1))             
@@ -132,7 +130,7 @@ public class TopicRouterTest {
               new TopicSubscription(4, "/sub-b")))))
         .then(() -> {
           // Subscribe C
-          subCSubscription.set(topicRouter.get("/sub-c").subscribe());
+          subCSubscription.set(topicRouter.route(source, "/sub-c").subscribe());
         })
         .expectNextMatches(subs -> subs.equals(Collections.singleton(
             new TopicSubscription(5, "/sub-c"))))
@@ -166,7 +164,6 @@ public class TopicRouterTest {
     Flux<Integer> source = Flux.just(1, 2, 3);
 
     TopicRouter<Integer> topicRouter = TopicRouter.<Integer>builder()
-        .source(source)
         .subscriptionThrottleDuration(Duration.ofSeconds(1))
         .build();
 
@@ -178,11 +175,11 @@ public class TopicRouterTest {
     StepVerifier.create(subscriptions)
         .then(() -> {        
           // Subscribe A while connected  
-          subASubscription.set(topicRouter.get("/sub-a").subscribe());
+          subASubscription.set(topicRouter.route(source, "/sub-a").subscribe());
         })
         .then(() -> {
           // Immediately subscribe B while connected
-          subBSubscription.set(topicRouter.get("/sub-b").subscribe());
+          subBSubscription.set(topicRouter.route(source, "/sub-b").subscribe());
         })            
         .expectNextMatches(subs -> subs.equals(
             // Should batch subscriptions together

@@ -1,5 +1,6 @@
 package com.trickl.flux.routing;
 
+import com.trickl.flux.publishers.ConcatProcessor;
 import com.trickl.flux.publishers.SubscriptionContextPublisher;
 import java.text.MessageFormat;
 import java.time.Duration;
@@ -16,20 +17,16 @@ import lombok.Getter;
 import lombok.extern.java.Log;
 import org.reactivestreams.Publisher;
 import reactor.core.Disposable;
-import reactor.core.publisher.EmitterProcessor;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
 
 @Log
 public class TopicRouter<T> {
-  private final Publisher<T> source;
-
   private final Function<String, Predicate<T>> topicFilter;
 
-  private final FluxSink<Set<TopicSubscription>> subscriptionSink;
+  private final ConcatProcessor<Set<TopicSubscription>> subscriptionProcessor;
 
-  private final FluxSink<Set<TopicSubscription>> cancelSink;
+  private final ConcatProcessor<Set<TopicSubscription>> cancelProcessor;
 
   private final Flux<Boolean> isConnectedFlux;
 
@@ -54,20 +51,17 @@ public class TopicRouter<T> {
    */
   @Builder
   public TopicRouter(
-      Publisher<T> source,
       Function<String, Predicate<T>> topicFilter,
       Publisher<?> connectedSignal,
       Publisher<?> disconnectedSignal,
       Duration subscriptionThrottleDuration,
       Duration cancelThrottleDuration,
       Boolean startConnected
-  ) {
-
+  ) {    
     Duration subThrottleDuration = Optional.ofNullable(subscriptionThrottleDuration)
         .orElse(DEFAULT_SUBSCRIPTION_THROTTLE);
-    EmitterProcessor<Set<TopicSubscription>> subscriptionProcessor = EmitterProcessor.create();
-    subscriptionSink = subscriptionProcessor.sink();
-    subscriptions = subscriptionProcessor
+    subscriptionProcessor = ConcatProcessor.create();
+    subscriptions = Flux.from(subscriptionProcessor)
         .buffer(subThrottleDuration)
         .map(list -> {
           Set<TopicSubscription> combined = list.stream()
@@ -76,33 +70,34 @@ public class TopicRouter<T> {
           return combined;
         });
 
-    Duration cancelThrottlePeriod = Optional.ofNullable(cancelThrottleDuration)
-        .orElse(DEFAULT_CANCEL_THROTTLE);
-    EmitterProcessor<Set<TopicSubscription>> cancelProcessor = EmitterProcessor.create();
-    cancelSink = cancelProcessor.sink();
 
-    cancellations = cancelProcessor
+    Duration cancelThrottlePeriod = Optional.ofNullable(cancelThrottleDuration)
+         .orElse(DEFAULT_CANCEL_THROTTLE);
+    cancelProcessor =  ConcatProcessor.create();
+
+    cancellations = Flux.from(cancelProcessor)
         .buffer(cancelThrottlePeriod)
         .map(list -> {
           Set<TopicSubscription> combined = list.stream()
               .flatMap(set -> set.stream())
               .collect(Collectors.toSet());
           return combined;
-        });
-        
-    this.source = Optional.ofNullable(source).orElseThrow(() -> new NullPointerException("source"));
+        });        
+
+
     this.topicFilter = Optional.ofNullable(topicFilter).orElse(topic -> value -> true);
 
     Boolean connected = Optional.ofNullable(startConnected).orElse(true);
-    
+                
     Publisher<Boolean> connectedFlux = connectedSignal == null ? Mono.empty()
         : Flux.from(connectedSignal).map(value -> true)
-        .log("ConnectedSignal", Level.FINE);
+        .log("ConnectedSignal", Level.FINE);    
+
 
     Publisher<Boolean> disconnectedFlux = disconnectedSignal == null ? Mono.empty() 
         : Flux.from(disconnectedSignal).map(value -> false)
-        .log("DisconnectedSignal", Level.FINE);        
-    
+        .log("DisconnectedSignal", Level.FINE);  
+
     isConnectedFlux = Flux.merge(
         Mono.just(connected),
         Flux.from(connectedFlux),
@@ -124,20 +119,21 @@ public class TopicRouter<T> {
     if (!isConnectedSubscription.isDisposed()) {
       isConnectedSubscription.dispose();
     }
-    subscriptionSink.complete();
+    subscriptionProcessor.complete();
   }
 
-  public Flux<T> get(String topic) {
-    return mapRouter.get(topic);
+  public Flux<T> route(Publisher<T> source, String topic) {
+    return mapRouter.route(source, topic);
   }
 
   /**
    * Create a topic specific flux.
    * 
+   * @param source the source flux
    * @param topic The topic name.
    * @return A flux filtered for this particular topic
   */
-  protected Flux<T> create(String topic) {
+  protected Flux<T> create(Publisher<T> source, String topic) {
     return isConnectedFlux.flatMap(isConnected -> {
       return Flux.from(SubscriptionContextPublisher.<T, TopicSubscription>builder()
           .source(source)
@@ -149,18 +145,18 @@ public class TopicRouter<T> {
             log.info(message);
             TopicSubscription topicSubscription = new TopicSubscription(id, topic);
             if (isConnected) {
-              subscriptionSink.next(Collections.singleton(topicSubscription));
+              subscriptionProcessor.sink().next(Collections.singleton(topicSubscription));
             }
             return topicSubscription;
           })
           .doOnCancel(topicSubscription -> {
             String message = MessageFormat.format(
-                "{0] unsubscribing to topic {1}, is connected? {2} ",
+                "{0} unsubscribing to topic {1}, is connected? {2} ",
                  topicSubscription.getId(), topicSubscription.getTopic(), isConnected);            
             log.info(message);
             
             if (isConnected) {
-              cancelSink.next(Collections.singleton(topicSubscription));
+              cancelProcessor.sink().next(Collections.singleton(topicSubscription));
             }
           })
           .build())

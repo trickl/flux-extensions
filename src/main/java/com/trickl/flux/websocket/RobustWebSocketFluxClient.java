@@ -12,6 +12,8 @@ import com.trickl.flux.mappers.FluxSinkAdapter;
 import com.trickl.flux.mappers.ThrowableMapper;
 import com.trickl.flux.mappers.ThrowingFunction;
 import com.trickl.flux.publishers.CacheableResource;
+import com.trickl.flux.publishers.ConcatProcessor;
+//import com.trickl.flux.publishers.SwitchableProcessor;
 import com.trickl.flux.retry.ExponentialBackoffRetry;
 import com.trickl.flux.routing.TopicRouter;
 import com.trickl.flux.routing.TopicSubscription;
@@ -44,7 +46,6 @@ import org.reactivestreams.Publisher;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.client.WebSocketClient;
-import reactor.core.Disposable;
 import reactor.core.publisher.EmitterProcessor;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
@@ -123,52 +124,116 @@ public class RobustWebSocketFluxClient<S, T> {
   @Builder.Default
   private Duration subscriptionThrottleDuration = Duration.ofSeconds(1);
 
+  public static final String ANSI_RESET = "\u001B[0m";
+  public static final String ANSI_RED = "\u001B[31m";
+
   private final CacheableResource<SharedStreamContext<T>> sharedStreamContext
       = new CacheableResource<SharedStreamContext<T>>(
-          context -> getSharedStreamContext(),
+          context -> getSharedStreamContext().cache(1).next(),
           context -> {
             return !context.getConnectedStreamContext()
             .getResponseContext().getIsTerminated().get(); 
           });
 
-  protected ResponseContext<T> createResponseContext() {
+  protected TopicContext<T> createTopicContext() {
+    log.info("Creating topic context");
+    EmitterProcessor<Long> connectedSignalEmitter = EmitterProcessor.create();
+    FluxSink<Long> connectedSignalSink = connectedSignalEmitter.sink();
+
+    EmitterProcessor<Long> disconnectedSignalEmitter = EmitterProcessor.create();
+    FluxSink<Long> disconnectedSignalSink = disconnectedSignalEmitter.sink();
+
+    Publisher<Long> connectedSignal = connectedSignalEmitter
+        .log(ANSI_RED + "connectedSignal" + ANSI_RESET).share();
+    Publisher<Long> disconnectedSignal = disconnectedSignalEmitter
+        .log(ANSI_RED + "disconnectedSignal" + ANSI_RESET).share();
+
+    TopicRouter<T> topicRouter = TopicRouter.<T>builder()
+        .startConnected(false)
+        .connectedSignal(connectedSignal) 
+        .disconnectedSignal(disconnectedSignal)
+        .subscriptionThrottleDuration(subscriptionThrottleDuration)
+        .topicFilter(destination -> frame -> isDataFrameForDestination.test(frame, destination))    
+        .build();
+
+    return new TopicContext<T>(
+      connectedSignalSink,
+      connectedSignal,
+      disconnectedSignalSink,   
+      disconnectedSignal,
+      topicRouter);
+  }
+
+  protected ResponseContext<T> createResponseContext(TopicContext<T> topicContext) {
     log.info("Creating response context");
     EmitterProcessor<Long> beforeOpenSignalEmitter = EmitterProcessor.create();
     FluxSink<Long> beforeOpenSignalSink = beforeOpenSignalEmitter.sink();
 
-    EmitterProcessor<Long> disconnectedSignalEmitter = EmitterProcessor.create();
-    FluxSink<Long> disconnectedSignalSink = beforeOpenSignalEmitter.sink();
+    EmitterProcessor<T> forceReconnectSignalEmitter = EmitterProcessor.create();
+    FluxSink<T> forceReconnectSignalSink = forceReconnectSignalEmitter.sink();
 
-    SwitchableProcessor<Duration> connectionExpectationProcessor =
-        SwitchableProcessor.create(beforeOpenSignalEmitter, "beforeOpen");
+    //SwitchableProcessor<Duration> connectionExpectationProcessor =
+    //    SwitchableProcessor.create(beforeOpenSignalEmitter, "beforeOpen");
+    ConcatProcessor<Duration> connectionExpectationProcessor =
+        ConcatProcessor.create();
 
-    SwitchableProcessor<T> streamRequestProcessor =
-        SwitchableProcessor.create(beforeOpenSignalEmitter, "streamRequest");
-
+    //SwitchableProcessor<T> streamRequestProcessor =
+    //    SwitchableProcessor.create(beforeOpenSignalEmitter, "streamRequest");
+    ConcatProcessor<T> streamRequestProcessor =
+        ConcatProcessor.create();
 
     AtomicBoolean isTerminated = new AtomicBoolean(false);
+    
+    Publisher<Set<TopicSubscription>> subscriptions = Flux.from(
+        topicContext.getTopicRouter().getSubscriptions()).log("subscriptions");
+    Publisher<Set<TopicSubscription>> subscribeActionFlux = Flux.from(subscriptions)
+        .doOnNext(topics -> {
+          List<T> subscriptionFrames = buildSubscribeFrames.apply(topics);
+          subscriptionFrames.stream().forEach(subscriptionFrame -> {
+            streamRequestProcessor.sink()
+                .next(subscriptionFrame);
+          });          
+        }).ignoreElements().log("subscriptionsActions");
+
+    Publisher<Set<TopicSubscription>> cancellations = 
+        topicContext.getTopicRouter().getCancellations();
+    Publisher<Set<TopicSubscription>> unsubscribeActionFlux = Flux.from(cancellations)
+        .doOnNext(topics -> {
+          List<T> unsubscribeFrames = buildUnsubscribeFrames.apply(topics);
+          unsubscribeFrames.stream().forEach(unsubscribeFrame -> {
+            streamRequestProcessor.sink()
+                .next(unsubscribeFrame);
+          });          
+        }).ignoreElements();
 
     return new ResponseContext<>(
+        topicContext,
         beforeOpenSignalSink,
-        disconnectedSignalSink,
-        disconnectedSignalEmitter,
+        forceReconnectSignalSink,
+        forceReconnectSignalEmitter,
         connectionExpectationProcessor,
         streamRequestProcessor,       
-        isTerminated);
+        isTerminated,
+        Flux.merge(subscribeActionFlux, unsubscribeActionFlux));
   }
 
   protected ConnectedStreamContext<T> createConnectedStreamContext(
       ResponseContext<T> responseContext, Flux<T> source, T connectedFrame) {
     log.info("Creating connected stream context");
 
-    EmitterProcessor<Long> connectedSignalEmitter = EmitterProcessor.create();
-    FluxSink<Long> connectedSignalSink = connectedSignalEmitter.sink();
+    //SwitchableProcessor<Duration> heartbeatSendFrequencyProcessor =
+    //    SwitchableProcessor.create(
+    //      responseContext.getTopicContext().getConnectedSignal(), 1, "heartbeatSend");
 
-    SwitchableProcessor<Duration> heartbeatSendFrequencyProcessor =
-        SwitchableProcessor.create(connectedSignalEmitter, 1, "heartbeatSend");
+    ConcatProcessor<Duration> heartbeatSendFrequencyProcessor =
+          ConcatProcessor.create(1);
 
-    SwitchableProcessor<Duration> heartbeatExpectationProcessor =
-        SwitchableProcessor.create(connectedSignalEmitter, 1, "heartbeatExpectation");
+    //SwitchableProcessor<Duration> heartbeatExpectationProcessor =
+    //    SwitchableProcessor.create(
+    //      responseContext.getTopicContext().getConnectedSignal(), 1, "heartbeatExpectation");
+
+    ConcatProcessor<Duration> heartbeatExpectationProcessor =
+        ConcatProcessor.create(1);
 
     Duration heartbeatSendFrequency = getHeartbeatSendFrequencyCallback.apply(connectedFrame);
     Duration heartbeatReceiveFrequency = getHeartbeatReceiveFrequencyCallback.apply(connectedFrame);
@@ -204,12 +269,35 @@ public class RobustWebSocketFluxClient<S, T> {
     Flux<T> heartbeatExpectations = Flux.from(heartbeatExpectation)
         .log("heartbeatExpectation").mergeWith(heartbeats);
 
-    Flux<T> sourceWithExpectations = source.mergeWith(heartbeatExpectations);
+    Flux<T> sourceWithExpectations = source
+        .mergeWith(heartbeatExpectations)
+        //.doOnError(error -> error instanceof MissingHeartbeatException, error -> {
+        // Reconnect on missing heartbeat
+        //  log.info("Source with Expectations forcing reconnect");
+        //  responseContext.getForceReconnectSignalSink().error(error);
+        //})
+        
+        .doOnError(MissingHeartbeatException.class, error -> {
+          log.info("Source with Expectations forcing reconnect");          
+          expectHeartbeatsEvery(
+              heartbeatExpectationProcessor.sink(), Duration.ZERO);
+          sendHeartbeatsEvery(
+              heartbeatSendFrequencyProcessor.sink(), Duration.ZERO);
+          responseContext.getForceReconnectSignalSink().error(error);
+        });
+    /*
+    .retryWhen(
+        errorFlux ->            
+        errorFlux.flatMap(
+          error -> {
+            return Mono.delay(Duration.ofSeconds(5)).doOnNext(delay -> {
+              log.info("Retrying after 5 seconds delay");
+            });
+          })).log("sourceWithExpectations");
+          */
 
     return new ConnectedStreamContext<>(
         responseContext,
-        connectedSignalSink,
-        connectedSignalEmitter,
         heartbeatExpectationProcessor,
         heartbeatSendFrequencyProcessor,
         heartbeatSendFrequency,
@@ -226,68 +314,42 @@ public class RobustWebSocketFluxClient<S, T> {
             .getStream()
             .onErrorContinue(JsonProcessingException.class, this::warnAndDropError)
             .doOnError(
-                error -> {                  
-                  expectHeartbeatsEvery(
-                      context.getHeartbeatExpectationProcessor().sink(), Duration.ZERO);
-                  sendHeartbeatsEvery(
-                      context.getHeartbeatSendFrequencyProcessor().sink(), Duration.ZERO);
+                error -> {
                   sendErrorFrame(
                       error, context.getResponseContext().getStreamRequestProcessor().sink());
-                })
+                })  
+            //.onErrorContinue(MissingHeartbeatException.class, (error, value) -> {
+            //  log.info("Shared stream forcing reconnect");
+            //  context.getResponseContext().getForceReconnectSignalSink().error(error);
+            //})
+            // Don't cancel
             .retryWhen(
                 errorFlux ->
-                  errorFlux.flatMap(
-                    error -> {
-                      return Mono.delay(Duration.ofSeconds(5)).doOnNext(delay -> {
-                        log.info("Retrying after 5 seconds delay");
-                      });
-                    }))
+                  errorFlux.flatMap(error -> Mono.empty()))
+            /*
+            .retryWhen(
+                errorFlux ->            
+            errorFlux.flatMap(
+              error -> {
+                return Mono.delay(Duration.ofSeconds(5)).doOnNext(delay -> {
+                  log.info("Retrying after 5 seconds delay");
+                });
+              }))
+              */
+              
             .share()
             .log("sharedStream", Level.INFO);
-
-    TopicRouter<T> topicFluxRouter = TopicRouter.<T>builder()
-        .source(sharedStream)
-        .startConnected(true)
-        .connectedSignal(context.getConnectedSignal()) 
-        .disconnectedSignal(context.getResponseContext().getDisconnectedSignal())
-        .subscriptionThrottleDuration(subscriptionThrottleDuration)
-        .topicFilter(destination -> frame -> isDataFrameForDestination.test(frame, destination))    
-        .build();
-
-    Publisher<Set<TopicSubscription>> subscriptions = topicFluxRouter.getSubscriptions();
-    Disposable subscriptionsSubscription = Flux.from(subscriptions)
-        .doOnNext(topics -> {
-          List<T> subscriptionFrames = buildSubscribeFrames.apply(topics);
-          subscriptionFrames.stream().forEach(subscriptionFrame -> {
-            context.getResponseContext().getStreamRequestProcessor().sink()
-                .next(subscriptionFrame);
-          });          
-        })
-        .subscribe();
-
-    Publisher<Set<TopicSubscription>> cancellations = topicFluxRouter.getCancellations();
-    Disposable cancellationsSubscription = Flux.from(cancellations)
-        .doOnNext(topics -> {
-          List<T> unsubscribeFrames = buildUnsubscribeFrames.apply(topics);
-          unsubscribeFrames.stream().forEach(unsubscribeFrame -> {
-            context.getResponseContext().getStreamRequestProcessor().sink()
-                .next(unsubscribeFrame);
-          });          
-        })
-        .subscribe();
 
     log.info("Returning SharedStreamContext.");
     return new SharedStreamContext<>(
         context,
-        topicFluxRouter,
-        subscriptionsSubscription,
-        cancellationsSubscription);
+        sharedStream);
   }
 
-  protected Mono<SharedStreamContext<T>> getSharedStreamContext() {
-    return Mono.<SharedStreamContext<T>, ResponseContext<T>>usingWhen(
-        Mono.fromSupplier(this::createResponseContext),
-        context -> getSharedStreamContext(context),
+  protected Flux<SharedStreamContext<T>> getSharedStreamContext() {
+    return Flux.<SharedStreamContext<T>, TopicContext<T>>usingWhen(
+        Mono.fromSupplier(this::createTopicContext).cache(),
+        context -> getSharedStreamContext(createResponseContext(context)),
         context -> {
           log.info("Cleaning up response context");
           return Mono.empty();
@@ -302,7 +364,7 @@ public class RobustWebSocketFluxClient<S, T> {
         .log("ConnectedStreamContext");
   }
 
-  protected Mono<SharedStreamContext<T>> getSharedStreamContext(
+  protected Flux<SharedStreamContext<T>> getSharedStreamContext(
       ResponseContext<T> context) {
     log.info("Creating base stream context mono");
     Publisher<T> sendWithResponse =
@@ -324,7 +386,7 @@ public class RobustWebSocketFluxClient<S, T> {
             .doBeforeClose(response -> Mono.fromRunnable(() -> {
               log.info("Response context is terminated.");
               context.getIsTerminated().set(true);
-              context.getDisconnectedSignalSink().next(1L);
+              context.getTopicContext().getDisconnectedSignalSink().next(1L);
             }).then(
               Mono.delay(Duration.ofMillis(500)).then())
             )
@@ -338,9 +400,13 @@ public class RobustWebSocketFluxClient<S, T> {
         Flux.defer(() -> inputTransformer.apply(
           webSocketFluxClient.get(outputTransformer.apply(sendWithResponse))))
             .flatMap(new ThrowableMapper<T, T>(this::handleErrorFrame))
-            .log("sharedBase")            
+            .log("sharedBase")     
+            .mergeWith(
+              Flux.from(context.getSubscriptionActionsFlux()).map(none -> null)
+            )
             .share()
             .log("base", Level.INFO);
+
 
     Flux<T> connected = base.filter(isConnectedFrame)
         .log("connection", Level.INFO);
@@ -356,12 +422,12 @@ public class RobustWebSocketFluxClient<S, T> {
     Publisher<T> connectionExpectation =
         connectionExpectationFactory.apply(context.getConnectionExpectationProcessor(), connected);
 
-    Mono<T> connectedWithExpectations =
+    Flux<T> connectedWithExpectations =
         connected
-            .mergeWith(connectionExpectation)            
+            .mergeWith(connectionExpectation)
+            .mergeWith(context.getForceReconnectSignal())
             .log("sharedConnectedWithExpectations", Level.INFO)
             .share()
-            .next()
             .log("connectedWithExpectations", Level.INFO);
 
     return connectedWithExpectations.<SharedStreamContext<T>>flatMap(
@@ -371,8 +437,13 @@ public class RobustWebSocketFluxClient<S, T> {
                 .log("ConnectedStreamContextSupplier", Level.INFO)
                 .<SharedStreamContext<T>>map(
                     connectedStreamContext -> {
-                      connectedStreamContext.getConnectedSignalSink().next(1L);
+                      connectedStreamContext
+                          .getResponseContext()
+                          .getTopicContext()
+                          .getConnectedSignalSink()
+                          .next(1L);
 
+                      log.info("Sending / expecting heartbeats");
                       if (!connectedStreamContext.getHeartbeatReceiveFrequency().isZero()) {
                         expectHeartbeatsEvery(
                             connectedStreamContext.getHeartbeatExpectationProcessor().sink(),
@@ -389,7 +460,7 @@ public class RobustWebSocketFluxClient<S, T> {
 
   protected Mono<Void> connect(
       FluxSink<T> streamRequestSink,
-      SwitchableProcessor<Duration> connectionExpectationProcessor) {
+      ConcatProcessor<Duration> connectionExpectationProcessor) {
     Duration connectionTimeout = doConnect.apply(streamRequestSink);
     expectConnectionWithin(connectionExpectationProcessor.sink(), connectionTimeout);
     return Mono.empty();
@@ -474,7 +545,7 @@ public class RobustWebSocketFluxClient<S, T> {
     log.log(
         Level.WARNING,
         MessageFormat.format(
-            "Json processing error.\n Message: {0}\nValue: {1}\n",
+            "Message: {0}\nValue: {1}\n",
             new Object[] {ex.getMessage(), value}));
   }
 
@@ -490,7 +561,12 @@ public class RobustWebSocketFluxClient<S, T> {
      
     return Flux.<T, SharedStreamContext<T>>usingWhen(
       sharedStreamContext.getResource(),
-      context -> context.getTopicRouter().get(destination)
+      context -> context
+          .getConnectedStreamContext()
+          .getResponseContext()
+          .getTopicContext()
+          .getTopicRouter().route(
+          context.getSharedStream(), destination)
       .timeout(minMessageFrequency)
       .onErrorMap(
         error -> {
@@ -503,31 +579,44 @@ public class RobustWebSocketFluxClient<S, T> {
   }
 
   @Value
-  private static class ResponseContext<T> {
-    protected final FluxSink<Long> beforeOpenSignalSink;
+  private static class TopicContext<T> {
+    protected final FluxSink<Long> connectedSignalSink;
+
+    protected final Publisher<Long> connectedSignal;
 
     protected final FluxSink<Long> disconnectedSignalSink;
 
     protected final Publisher<Long> disconnectedSignal;
 
-    protected final SwitchableProcessor<Duration> connectionExpectationProcessor;
+    protected final TopicRouter<T> topicRouter;
+  }
 
-    protected final SwitchableProcessor<T> streamRequestProcessor;    
+  @Value
+  private static class ResponseContext<T> {
+    protected final TopicContext<T> topicContext;
+
+    protected final FluxSink<Long> beforeOpenSignalSink;
+
+    protected final FluxSink<T> forceReconnectSignalSink;
+
+    protected final Publisher<T> forceReconnectSignal;
+
+    protected final ConcatProcessor<Duration> connectionExpectationProcessor;
+
+    protected final ConcatProcessor<T> streamRequestProcessor;    
 
     protected final AtomicBoolean isTerminated;
+
+    protected final Publisher<Set<TopicSubscription>> subscriptionActionsFlux;
   }
 
   @Value
   private static class ConnectedStreamContext<T> {
     protected final ResponseContext<T> responseContext;
 
-    protected final FluxSink<Long> connectedSignalSink;
+    protected final ConcatProcessor<Duration> heartbeatExpectationProcessor;
 
-    protected final Publisher<Long> connectedSignal;
-
-    protected final SwitchableProcessor<Duration> heartbeatExpectationProcessor;
-
-    protected final SwitchableProcessor<Duration> heartbeatSendFrequencyProcessor;
+    protected final ConcatProcessor<Duration> heartbeatSendFrequencyProcessor;
 
     protected final Duration heartbeatSendFrequency;
 
@@ -540,10 +629,6 @@ public class RobustWebSocketFluxClient<S, T> {
   private static class SharedStreamContext<T> {
     protected final ConnectedStreamContext<T> connectedStreamContext;
 
-    protected final TopicRouter<T> topicRouter;
-
-    protected final Disposable subscriptionSubscription;
-
-    protected final Disposable cancellationsSubscription;
+    protected final Flux<T> sharedStream;
   }
 }

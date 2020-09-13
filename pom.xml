@@ -39,6 +39,7 @@
   </scm>
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <java.version>14</java.version>
   </properties>
   <dependencies>
     <dependency>
@@ -71,7 +72,7 @@
     <dependency>
       <groupId>com.github.trickl</groupId>
       <artifactId>flux-mock-websocket</artifactId>
-      <version>0.0.2</version>
+      <version>0.0.3-SNAPSHOT</version>
     </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
@@ -111,8 +112,6 @@
         <artifactId>maven-compiler-plugin</artifactId>
         <version>3.3</version>
         <configuration>
-          <source>1.8</source>
-          <target>1.8</target>
           <debug>true</debug>
         </configuration>
       </plugin>
@@ -222,7 +221,7 @@
           <plugin>
             <groupId>org.jacoco</groupId>
             <artifactId>jacoco-maven-plugin</artifactId>
-            <version>0.8.1</version>
+            <version>0.8.5</version>
             <executions>
               <execution>
                 <id>prepare-agent</id>

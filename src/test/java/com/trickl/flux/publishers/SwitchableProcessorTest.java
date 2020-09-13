@@ -1,4 +1,4 @@
-package com.trickl.flux.websocket;
+package com.trickl.flux.publishers;
 
 import com.trickl.flux.config.WebSocketConfiguration;
 import java.time.Duration;

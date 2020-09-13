@@ -156,6 +156,7 @@ public class StompFluxClient {
   }
 
   protected List<StompFrame> buildSubscribeFrames(Set<TopicSubscription> topics) {
+    log.info("Building subscribe frames");
     return topics.stream().map(topic -> StompSubscribeFrame.builder()
     .destination(topic.getTopic())
     .subscriptionId(String.valueOf(topic.getId()))

@@ -1,6 +1,6 @@
-package com.trickl.flux.websocket;
+package com.trickl.flux.publishers;
 
-import lombok.Data;
+import java.util.concurrent.atomic.AtomicReference;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.java.Log;
 import org.reactivestreams.Publisher;
@@ -8,6 +8,7 @@ import org.reactivestreams.Subscriber;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
+import reactor.core.publisher.Mono;
 import reactor.core.publisher.UnicastProcessor;
 
 @Log
@@ -16,7 +17,7 @@ public class SwitchableProcessor<T> implements Publisher<T> {
 
   protected final Publisher<T> innerPublisher;
 
-  protected final FluxSinkRef<T> innerSinkRef;
+  protected final AtomicReference<FluxSink<T>> innerSinkRef;
 
   protected final Disposable subscription;
 
@@ -39,7 +40,7 @@ public class SwitchableProcessor<T> implements Publisher<T> {
    */
   public static <T> SwitchableProcessor<T> create(
       Publisher<?> switchSignal, int history, String name) {
-    FluxSinkRef<T> sinkRef = new FluxSinkRef<>();
+    AtomicReference<FluxSink<T>> sinkRef = new AtomicReference<FluxSink<T>>();
 
     Flux<T> publisher = createSwitchablePublisherAndSink(switchSignal, sinkRef, name)
         .log(name).replay(history).refCount();
@@ -49,34 +50,30 @@ public class SwitchableProcessor<T> implements Publisher<T> {
   }
 
   public FluxSink<T> sink() {
-    return innerSinkRef.getSink();
+    return innerSinkRef.get();
   }
 
   public void complete() {
-    innerSinkRef.getSink().complete();
+    innerSinkRef.get().complete();
     subscription.dispose();
   }
   
   protected static <T> Flux<T> createSwitchablePublisherAndSink(
-      Publisher<?> switchSignal, FluxSinkRef<T> sinkRef, String name) {
+      Publisher<?> switchSignal, AtomicReference<FluxSink<T>> sinkRef, String name) {
     log.info("Creating switchableProcessor - " + name);
+    UnicastProcessor<T> initialEmitter =  UnicastProcessor.<T>create();
+    sinkRef.set(initialEmitter.sink());
+
     Flux<Publisher<T>> mergedPublishers = Flux.from(switchSignal)
         .cache(1).log("cachedSwitchSignal").map(signal -> {        
           log.info("switchableProcessor received signal - " + name);
           UnicastProcessor<T> nextEmitter =  UnicastProcessor.<T>create();
-          if (sinkRef.getSink() != null) {
-            sinkRef.getSink().complete();
-          }
-          sinkRef.setSink(nextEmitter.sink());
+          sinkRef.get().complete();
+          sinkRef.set(nextEmitter.sink());
           return nextEmitter;
         });
 
-    return Flux.switchOnNext(mergedPublishers);
-  }
-
-  @Data
-  private static class FluxSinkRef<T> {
-    protected FluxSink<T> sink;
+    return Flux.switchOnNext(Mono.just(initialEmitter).thenMany(mergedPublishers));
   }
 
   @Override
