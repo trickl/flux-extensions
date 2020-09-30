@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.util.Collections;
 import java.util.List;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import lombok.Builder;
@@ -19,10 +20,17 @@ public class ExponentialBackoffRetry implements Function<Flux<Throwable>, Flux<L
   @Builder.Default private Duration considerationPeriod = Duration.ofSeconds(32);
   @Builder.Default private int maxRetries = 3;
   @Builder.Default private String name = "default";
+  @Builder.Default private Predicate<Throwable> shouldRetry = error -> true;
   
   @Override
   public Flux<Long> apply(Flux<Throwable> errorFlux) {
     return errorFlux
+        .flatMap(error -> {
+          if (!shouldRetry.test(error)) {
+            return Mono.<Throwable>error(new IllegalStateException("Failed retry predicate"));
+          }
+          return Mono.just(error);
+        })
         .elapsed()
         .scan(Collections.<Tuple2<Long, Throwable>>emptyList(),
             this::accumulateErrors)

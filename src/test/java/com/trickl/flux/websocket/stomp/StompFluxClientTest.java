@@ -6,6 +6,7 @@ import com.trickl.flux.websocket.MockServerWithWebSocket;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.regex.Pattern;
+import lombok.extern.java.Log;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -17,6 +18,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
+@Log
 @ActiveProfiles({"unittest"})
 @TestPropertySource(properties = { "spring.config.location=classpath:application.yml" })
 @SpringBootTest(classes = WebSocketConfiguration.class)
@@ -234,6 +236,7 @@ public class StompFluxClientTest {
         //.heartbeatReceiveFrequency(Duration.ofMinutes(5))
         .maxRetries(2)
         .doBeforeSessionOpen(Mono.defer(() -> {
+          log.info("Starting websocket session.");
           mockServer.start();          
           return Mono.delay(Duration.ofMillis(500)).then();
         }))
