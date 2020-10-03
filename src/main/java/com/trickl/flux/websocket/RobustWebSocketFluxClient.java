@@ -32,6 +32,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 import java.util.function.BiPredicate;
 import java.util.function.Function;
@@ -332,6 +333,8 @@ public class RobustWebSocketFluxClient<S, T> {
 
     DecodingTransformer<S, T> inputTransformer = new DecodingTransformer<S, T>(decoder);
     EncodingTransformer<T, S> outputTransformer = new EncodingTransformer<T, S>(encoder);
+    AtomicReference<Function<Publisher<S>, Mono<Void>>> beforeCloseAction = 
+        new AtomicReference<>(response -> Mono.empty());
 
     WebSocketFluxClient<S> webSocketFluxClient =
          WebSocketFluxClient.<S>builder()
@@ -346,13 +349,10 @@ public class RobustWebSocketFluxClient<S, T> {
                 connect(new FluxSinkAdapter<T, S, IOException>(sink, encoder), 
                 context.getConnectionExpectationProcessor()))
             .doBeforeClose(response -> 
-              disconnect(
-                  inputTransformer.apply(response), 
-                  context.getStreamRequestProcessor().sink(), 
-                  context.getDisconnectReceiptExpectationProcessor(),
-                  context.getDisconnectReceiptExpectationProcessor().sink())
+              beforeCloseAction.get().apply(response)
                   .then(Mono.fromRunnable(() -> {
                     context.getTopicContext().getDisconnectedSignalSink().next(1L);
+                    beforeCloseAction.set(resp -> Mono.empty());
                   })))
             .doAfterClose(doAfterSessionClose)
             .build();
@@ -404,6 +404,13 @@ public class RobustWebSocketFluxClient<S, T> {
                           .getTopicContext()
                           .getConnectedContextSink()
                           .next(connectedStreamContext);
+
+                    beforeCloseAction.set(response ->
+                        disconnect(
+                          inputTransformer.apply(response), 
+                          context.getStreamRequestProcessor().sink(), 
+                          context.getDisconnectReceiptExpectationProcessor(),
+                          context.getDisconnectReceiptExpectationProcessor().sink()));
 
                       log.info("Sending / expecting heartbeats");
                       if (!connectedStreamContext.getHeartbeatReceiveFrequency().isZero()) {
