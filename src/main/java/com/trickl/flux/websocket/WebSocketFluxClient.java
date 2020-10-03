@@ -55,6 +55,9 @@ public class WebSocketFluxClient<T> {
         context -> {
           log.info("Disposing of connection");
           return doBeforeClose.apply(context.getReceivePublisher())
+              .onErrorContinue((error, value) -> {
+                log.warning("An error occured prior to closing the session: " + error.getMessage());
+              })
               .log("do before close", Level.FINER)
               .then(closeSession(context)).log("cleanup-session");
         }).log("websocketfluxclient", Level.INFO);
@@ -65,8 +68,10 @@ public class WebSocketFluxClient<T> {
     FluxSink<WebSocketSession> sessionSink = sessionProcessor.sink();
     EmitterProcessor<T> receiveProcessor = EmitterProcessor.create();
     FluxSink<T> receiveSink = receiveProcessor.sink();
+    Publisher<T> sharedReceivedPublisher = receiveProcessor.log("sharedReceiveProcessor").share();
     EmitterProcessor<T> openProcessor = EmitterProcessor.create();
     FluxSink<T> openSink = openProcessor.sink();
+    Disposable internalReceiveSubscription = Flux.from(sharedReceivedPublisher).subscribe();
     
     Mono<Void> openSocket = webSocketHeadersProvider
         .<Void>flatMap(
@@ -86,6 +91,7 @@ public class WebSocketFluxClient<T> {
         .doFinally(signal -> {
           sessionSink.complete();
           receiveSink.complete();
+          internalReceiveSubscription.dispose();
           log.info("Socket closed.");
         })
         .log("Connection", Level.FINER);
@@ -94,7 +100,8 @@ public class WebSocketFluxClient<T> {
         openSocket::subscribe,
         subscription -> sessionProcessor.flatMap(
           webSocketSession -> doAfterOpen.apply(openSink).then(Mono.just(
-            new SessionContext<T>(webSocketSession, receiveProcessor, subscription)))).next(),
+            new SessionContext<T>(
+              webSocketSession, sharedReceivedPublisher, subscription)))).next(),
         subscription -> {
           log.info("Socket opened.");
         }));

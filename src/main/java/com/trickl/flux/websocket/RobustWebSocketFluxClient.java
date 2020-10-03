@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.trickl.exceptions.ConnectionTimeoutException;
 import com.trickl.exceptions.MissingHeartbeatException;
 import com.trickl.exceptions.NoDataException;
+import com.trickl.exceptions.ReceiptTimeoutException;
 import com.trickl.exceptions.RemoteStreamException;
 import com.trickl.flux.mappers.DecodingTransformer;
 import com.trickl.flux.mappers.EncodingTransformer;
@@ -78,7 +79,7 @@ public class RobustWebSocketFluxClient<S, T> {
 
   @Builder.Default private Predicate<T> isConnectedFrame = frame -> true;
 
-  @Builder.Default private Predicate<T> isReceiptFrame = frame -> true;
+  @Builder.Default private Predicate<T> isDisconnectReceiptFrame = frame -> true;
 
   @Builder.Default private BiPredicate<T, String> isDataFrameForDestination =
       (frame, destination) -> true;
@@ -175,6 +176,9 @@ public class RobustWebSocketFluxClient<S, T> {
     ConcatProcessor<Duration> connectionExpectationProcessor =
         ConcatProcessor.create();
 
+    ConcatProcessor<Duration> disconnectReceiptProcessor =
+        ConcatProcessor.create();
+
     ConcatProcessor<T> streamRequestProcessor =
         ConcatProcessor.create();
     
@@ -206,6 +210,7 @@ public class RobustWebSocketFluxClient<S, T> {
         forceReconnectSignalSink,
         forceReconnectSignalEmitter,
         connectionExpectationProcessor,
+        disconnectReceiptProcessor,
         streamRequestProcessor,
         Flux.merge(subscribeActionFlux, unsubscribeActionFlux));
   }
@@ -265,9 +270,6 @@ public class RobustWebSocketFluxClient<S, T> {
               heartbeatExpectationProcessor.sink(), Duration.ZERO);
           sendHeartbeatsEvery(
               heartbeatSendFrequencyProcessor.sink(), Duration.ZERO);
-
-          // Kick the connection
-          //responseContext.getForceReconnectSignalSink().error(error);
         }).log("sourceWithExpectations");
           
     return new ConnectedStreamContext<>(
@@ -296,21 +298,11 @@ public class RobustWebSocketFluxClient<S, T> {
                 });
     })
         .retryWhen(ExponentialBackoffRetry.builder()
-        .initialRetryDelay(initialRetryDelay)
-        .considerationPeriod(retryConsiderationPeriod)
-        .maxRetries(maxRetries)
-        .name("ConnectedStreamContext")
-        .build()) 
-        /*
-        .retryWhen(
-          errorFlux ->            
-          errorFlux.flatMap(
-            error -> {
-              return Mono.delay(Duration.ofSeconds(5)).doOnNext(delay -> {
-                log.info("Retrying after 5 seconds delay");
-              });
-            }))
-            */
+            .initialRetryDelay(initialRetryDelay)
+            .considerationPeriod(retryConsiderationPeriod)
+            .maxRetries(maxRetries)
+            .name("ConnectedStreamContext")
+            .build())
         .share()
         .log("sharedStream", Level.INFO);
 
@@ -337,6 +329,10 @@ public class RobustWebSocketFluxClient<S, T> {
         Flux.merge(Flux.from(context.getStreamRequestProcessor()))
             .log("sendWithResponse", Level.FINE);
 
+
+    DecodingTransformer<S, T> inputTransformer = new DecodingTransformer<S, T>(decoder);
+    EncodingTransformer<T, S> outputTransformer = new EncodingTransformer<T, S>(encoder);
+
     WebSocketFluxClient<S> webSocketFluxClient =
          WebSocketFluxClient.<S>builder()
             .webSocketClient(webSocketClient)
@@ -349,17 +345,17 @@ public class RobustWebSocketFluxClient<S, T> {
                 sink ->
                 connect(new FluxSinkAdapter<T, S, IOException>(sink, encoder), 
                 context.getConnectionExpectationProcessor()))
-            .doBeforeClose(response -> Mono.fromRunnable(() -> {
-              log.info("Response context is terminated.");
-              context.getTopicContext().getDisconnectedSignalSink().next(1L);
-            }).then(
-              Mono.delay(Duration.ofMillis(500)).then())
-            )
+            .doBeforeClose(response -> 
+              disconnect(
+                  inputTransformer.apply(response), 
+                  context.getStreamRequestProcessor().sink(), 
+                  context.getDisconnectReceiptExpectationProcessor(),
+                  context.getDisconnectReceiptExpectationProcessor().sink())
+                  .then(Mono.fromRunnable(() -> {
+                    context.getTopicContext().getDisconnectedSignalSink().next(1L);
+                  })))
             .doAfterClose(doAfterSessionClose)
             .build();
-
-    DecodingTransformer<S, T> inputTransformer = new DecodingTransformer<S, T>(decoder);
-    EncodingTransformer<T, S> outputTransformer = new EncodingTransformer<T, S>(encoder);
 
     Flux<T> base =
         Flux.defer(() -> inputTransformer.apply(
@@ -392,14 +388,6 @@ public class RobustWebSocketFluxClient<S, T> {
             .mergeWith(connectionExpectation)
             .mergeWith(context.getForceReconnectSignal())
             .log("sharedConnectedWithExpectations", Level.INFO)
-            /*
-            .retryWhen(ExponentialBackoffRetry.builder()
-              .initialRetryDelay(initialRetryDelay)
-              .considerationPeriod(retryConsiderationPeriod)
-              .maxRetries(maxRetries)
-              .name("ConnectedStreamContext")
-              .build())
-              */
             .share()
             .log("connectedWithExpectations", Level.INFO);
 
@@ -445,24 +433,43 @@ public class RobustWebSocketFluxClient<S, T> {
   protected Mono<Void> disconnect(
       Publisher<T> response,
       FluxSink<T> streamRequestSink,
-      FluxSink<Duration> receiptExpectationSink) {
-    disconnect(streamRequestSink, receiptExpectationSink);
-
-    return Mono.from(
-            Flux.from(response)
-                .filter(frame -> isReceiptFrame.test(frame))                
-                .log("disconnect"))
-        .then();
-  }
-
-  protected void disconnect(
-      FluxSink<T> streamRequestSink, FluxSink<Duration> receiptExpectationSink) {    
+      Publisher<Duration> disconnectReceiptExpectationProcessor,
+      FluxSink<Duration> disconnectReceiptExpectationSink) {
     Optional<T> disconnectFrame = buildDisconnectFrame.get();
-    log.info("Disconnecting...");    
-    if (disconnectFrame.isPresent()) {
-      receiptExpectationSink.next(disconnectionReceiptTimeout);
-      streamRequestSink.next(disconnectFrame.get());
+    log.info("Disconnecting...");
+    if (!disconnectFrame.isPresent()) {      
+      return Mono.empty();      
     }
+
+    if (disconnectionReceiptTimeout.isZero()) {
+      streamRequestSink.next(disconnectFrame.get());
+      return Mono.empty();
+    }
+    
+    Mono<T> disconnectReceipt = Flux.from(response)
+        .filter(isDisconnectReceiptFrame)
+        .next()
+        .log("disconnectReceipt", Level.INFO);
+
+    ExpectedResponseTimeoutFactory<T> disconnectReceiptExpectationFactory =
+        ExpectedResponseTimeoutFactory.<T>builder()
+            .isRecurring(false)
+            .isResponse(value -> true)
+            .timeoutExceptionMapper(
+                (error, period) ->
+                    new ReceiptTimeoutException("No disconnect receipt within " + period, error))
+            .build();
+
+    Publisher<T> disconnectReceiptExpectation =
+        disconnectReceiptExpectationFactory.apply(
+          disconnectReceiptExpectationProcessor, disconnectReceipt)
+          .log("disconnectReceiptExceptation");
+
+    return Flux.from(disconnectReceiptExpectation).mergeWith(
+      Mono.fromRunnable(() -> {        
+        disconnectReceiptExpectationSink.next(disconnectionReceiptTimeout);
+        streamRequestSink.next(disconnectFrame.get());
+      })).then().log("disconnect");
   }
 
   protected T handleErrorFrame(T frame) throws RemoteStreamException {  
@@ -575,6 +582,8 @@ public class RobustWebSocketFluxClient<S, T> {
     protected final Publisher<T> forceReconnectSignal;
 
     protected final ConcatProcessor<Duration> connectionExpectationProcessor;
+
+    protected final ConcatProcessor<Duration> disconnectReceiptExpectationProcessor;
 
     protected final ConcatProcessor<T> streamRequestProcessor;    
 

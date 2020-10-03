@@ -25,9 +25,9 @@ public class ExpectedResponseTimeoutFactory<T> implements
   private BiFunction<TimeoutException, Duration, ? extends Throwable> timeoutExceptionMapper
       = (error, duration) -> error;
 
-  public Publisher<T> apply(
+  public Flux<T> apply(
       Publisher<Duration> frequencyPublisher, Publisher<T> stream) {
-    return Flux.from(frequencyPublisher)
+    return Flux.from(isRecurring ? Flux.from(frequencyPublisher) : Mono.from(frequencyPublisher))
         .switchMap(period -> timeoutNoElement(period, stream));    
   }
 
@@ -36,7 +36,7 @@ public class ExpectedResponseTimeoutFactory<T> implements
       Publisher<T> stream) {
     if (frequency.isZero()) {
       log.info("Cancelling response expectation");
-      return Flux.empty();
+      return Mono.empty();
     }
     log.info("Expecting responses every " + frequency.toString());
 

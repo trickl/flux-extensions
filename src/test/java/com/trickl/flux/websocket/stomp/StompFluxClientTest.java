@@ -3,8 +3,10 @@ package com.trickl.flux.websocket.stomp;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trickl.flux.config.WebSocketConfiguration;
 import com.trickl.flux.websocket.MockServerWithWebSocket;
+import com.trickl.flux.websocket.VerifierComplete;
 import java.io.IOException;
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 import lombok.extern.java.Log;
 import org.junit.jupiter.api.Test;
@@ -14,6 +16,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.web.reactive.socket.client.ReactorNettyWebSocketClient;
 import org.springframework.web.reactive.socket.client.WebSocketClient;
+import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
@@ -31,18 +34,18 @@ public class StompFluxClientTest {
   private static final Pattern STOMP_SUBSCRIBE_PATTERN = 
       Pattern.compile("SUBSCRIBE.*", Pattern.DOTALL);
 
-  //private static final Pattern STOMP_UNSUBSCRIBE_PATTERN = 
-  //    Pattern.compile("UNSUBSCRIBE.*", Pattern.DOTALL);
+  private static final Pattern STOMP_UNSUBSCRIBE_PATTERN = 
+      Pattern.compile("UNSUBSCRIBE.*", Pattern.DOTALL);
   private static final Pattern STOMP_ERROR_PATTERN = 
       Pattern.compile("ERROR.*", Pattern.DOTALL);
-  //private static final Pattern STOMP_DISCONNECT_PATTERN 
-  //    = Pattern.compile("DISCONNECT.*", Pattern.DOTALL);
+  private static final Pattern STOMP_DISCONNECT_PATTERN 
+      = Pattern.compile("DISCONNECT.*", Pattern.DOTALL);
   private static final String STOMP_CONNECTED_MESSAGE = 
       "CONNECTED\nversion:1.2\nheart-beat:3000,3000\n\n\u0000";
   private static final String STOMP_CONNECTED_NO_HB_MESSAGE = 
       "CONNECTED\nversion:1.2\nheart-beat:0,0\n\n\u0000";
-  //private static final String STOMP_RECEIPT_MESSAGE = 
-  //    "RECEIPT\nreceipt-id:message-12345\n\n\u0000";
+  private static final String STOMP_RECEIPT_MESSAGE = 
+      "RECEIPT\nreceipt-id:message-12345\n\n\u0000";
 
   Mono<Void> shutdown(MockServerWithWebSocket mockServer) {
     return Mono.delay(Duration.ofMillis(500)).then(
@@ -58,7 +61,7 @@ public class StompFluxClientTest {
   }
 
   @Test
-  public void testSubscribeThenTerminate() {
+  public void testConnectSubscribeDisconnect() {
 
     MockServerWithWebSocket mockServer = new MockServerWithWebSocket();
 
@@ -74,14 +77,14 @@ public class StompFluxClientTest {
         .doAfterSessionClose(Mono.defer(() -> shutdown(mockServer)))
         .build();
 
-    mockServer.beginVerifier()
+    VerifierComplete verifierComplete = mockServer.beginVerifier()
         .thenWaitServerStartThenUpgrade()
         .thenExpectOpen()
         .thenExpectMessage(STOMP_CONNECT_PATTERN)
         .thenSend(STOMP_CONNECTED_NO_HB_MESSAGE)
         .thenExpectMessage(STOMP_SUBSCRIBE_PATTERN)
-        .thenWait(Duration.ofSeconds(3))
-        //.then(() -> stompClient.terminate().subscribe())
+        .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
+        .thenSend(STOMP_RECEIPT_MESSAGE)
         .thenExpectClose(Duration.ofSeconds(3))
         .thenWaitServerShutdown()
         .thenVerify();
@@ -90,8 +93,50 @@ public class StompFluxClientTest {
         "/messages", String.class, Duration.ofMinutes(30));
 
     StepVerifier.create(output)
-        .expectComplete()
+        .thenAwait(Duration.ofSeconds(5))      
+        .thenCancel()        
         .verify(Duration.ofSeconds(30));
+
+    verifierComplete.waitComplete(Duration.ofSeconds(30));
+  }
+
+  @Test
+  public void testTimeoutDisconnectReceipt() {
+
+    MockServerWithWebSocket mockServer = new MockServerWithWebSocket();
+
+    WebSocketClient client = new ReactorNettyWebSocketClient();
+    StompFluxClient stompClient =
+        StompFluxClient.builder()
+        .webSocketClient(client)
+        .transportUriProvider(mockServer::getWebSocketUri)
+        .doBeforeSessionOpen(Mono.defer(() -> {
+          mockServer.start();          
+          return Mono.delay(Duration.ofMillis(500)).then();
+        }))
+        .doAfterSessionClose(Mono.defer(() -> shutdown(mockServer)))
+        .build();
+
+    VerifierComplete verifierComplete = mockServer.beginVerifier()
+        .thenWaitServerStartThenUpgrade()
+        .thenExpectOpen()
+        .thenExpectMessage(STOMP_CONNECT_PATTERN)
+        .thenSend(STOMP_CONNECTED_NO_HB_MESSAGE)
+        .thenExpectMessage(STOMP_SUBSCRIBE_PATTERN)
+        .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
+        .thenExpectClose(Duration.ofSeconds(3))
+        .thenWaitServerShutdown()
+        .thenVerify();
+
+    Flux<String> output = stompClient.get(
+        "/messages", String.class, Duration.ofMinutes(30));
+
+    StepVerifier.create(output)
+        .thenAwait(Duration.ofSeconds(5))      
+        .thenCancel()        
+        .verify(Duration.ofSeconds(30));
+
+    verifierComplete.waitComplete(Duration.ofSeconds(30));
   }
 
   @Test
@@ -111,7 +156,9 @@ public class StompFluxClientTest {
         .doAfterSessionClose(Mono.defer(() -> shutdown(mockServer)))
         .build();
 
-    mockServer.beginVerifier()
+    AtomicReference<Disposable> secondSubscription = new AtomicReference<>();
+
+    VerifierComplete verifierComplete = mockServer.beginVerifier()
         .thenWaitServerStartThenUpgrade()
         .thenExpectOpen()
         .thenExpectMessage(STOMP_CONNECT_PATTERN)
@@ -121,9 +168,16 @@ public class StompFluxClientTest {
         .then(() -> {
           Flux<String> output2 = stompClient.get(
               "/messages2", String.class, Duration.ofMinutes(30));
-          output2.subscribe();
+          secondSubscription.set(output2.subscribe());
         })
         .thenExpectMessage(STOMP_SUBSCRIBE_PATTERN)
+        .thenWait(Duration.ofSeconds(1))
+        .then(() -> {
+          secondSubscription.get().dispose();
+        })
+        .thenExpectMessage(STOMP_UNSUBSCRIBE_PATTERN)
+        .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
+        .thenSend(STOMP_RECEIPT_MESSAGE)
         .thenExpectClose(Duration.ofSeconds(3))
         .thenWaitServerShutdown()
         .thenVerify();
@@ -132,8 +186,11 @@ public class StompFluxClientTest {
         "/messages", String.class, Duration.ofMinutes(30));
 
     StepVerifier.create(output)
-        .expectComplete()
+        .thenAwait(Duration.ofSeconds(10))      
+        .thenCancel()        
         .verify(Duration.ofSeconds(30));
+
+    verifierComplete.waitComplete(Duration.ofSeconds(30));
   }
 
   @Test
@@ -195,8 +252,8 @@ public class StompFluxClientTest {
         .thenExpectMessage(STOMP_HEARTBEAT_PATTERN, Duration.ofMinutes(5))
         .thenExpectMessage(STOMP_HEARTBEAT_PATTERN, Duration.ofMinutes(5))
         .thenExpectMessage(STOMP_ERROR_PATTERN, Duration.ofMinutes(5))
-        //.thenExpectMessage(STOMP_DISCONNECT_PATTERN, Duration.ofMinutes(5))
-        //.thenSend(STOMP_RECEIPT_MESSAGE)
+        .thenExpectMessage(STOMP_DISCONNECT_PATTERN, Duration.ofMinutes(5))
+        .thenSend(STOMP_RECEIPT_MESSAGE)
         .thenExpectClose()
         .thenWaitServerShutdown()
         .thenWaitServerStartThenUpgrade()
@@ -207,8 +264,8 @@ public class StompFluxClientTest {
         .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
         .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
         .thenExpectMessage(STOMP_ERROR_PATTERN, Duration.ofMinutes(5))
-        //.thenExpectMessage(STOMP_DISCONNECT_PATTERN)
-        //.thenSend(STOMP_RECEIPT_MESSAGE)
+        .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
+        .thenSend(STOMP_RECEIPT_MESSAGE)
         .thenExpectClose()
         .thenWaitServerShutdown()
         .thenWaitServerStartThenUpgrade()    
@@ -219,8 +276,8 @@ public class StompFluxClientTest {
         .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
         .thenExpectMessage(STOMP_HEARTBEAT_PATTERN)
         .thenExpectMessage(STOMP_ERROR_PATTERN, Duration.ofMinutes(5))
-        //.thenExpectMessage(STOMP_DISCONNECT_PATTERN)
-        //.thenSend(STOMP_RECEIPT_MESSAGE)
+        .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
+        .thenSend(STOMP_RECEIPT_MESSAGE)
         .thenExpectClose()
         .thenWaitServerShutdown()
         .thenVerify(); 
@@ -232,8 +289,6 @@ public class StompFluxClientTest {
         .transportUriProvider(mockServer::getWebSocketUri)
         .connectionTimeout(Duration.ofSeconds(15))
         .heartbeatReceiveFrequency(Duration.ofSeconds(3))
-        //.connectionTimeout(Duration.ofMinutes(5))
-        //.heartbeatReceiveFrequency(Duration.ofMinutes(5))
         .maxRetries(2)
         .doBeforeSessionOpen(Mono.defer(() -> {
           log.info("Starting websocket session.");

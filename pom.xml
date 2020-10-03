@@ -72,7 +72,7 @@
     <dependency>
       <groupId>com.github.trickl</groupId>
       <artifactId>flux-mock-websocket</artifactId>
-      <version>0.0.3-SNAPSHOT</version>
+      <version>0.0.5-SNAPSHOT</version>
     </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
