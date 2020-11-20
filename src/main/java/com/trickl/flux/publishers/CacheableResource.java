@@ -62,7 +62,7 @@ public class CacheableResource<T> {
   /**
    * Get a new resource directly from the supplier.
    * 
-   * @return
+   * @return A session resource
    */
   public Mono<T> getResourceWithoutCache() {
     return resourceGenerator.apply(null);

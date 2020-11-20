@@ -48,6 +48,13 @@ public class TopicRouter<T> {
 
   /**
    * Build a new topic flux router.
+   * 
+   * @param topicFilter Only listen to certain topics.
+   * @param connectedSignal Signal for connection.
+   * @param disconnectedSignal Signal for disconnecion.
+   * @param subscriptionThrottleDuration Debounce subscriptions.
+   * @param cancelThrottleDuration Debounce cancelations.
+   * @param startConnected Are we connected upon construction?
    */
   @Builder
   public TopicRouter(

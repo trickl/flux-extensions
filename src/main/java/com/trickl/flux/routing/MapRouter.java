@@ -15,6 +15,9 @@ public class MapRouter<T> {
 
   /**
    * Build a new topic flux router.
+   * 
+   * @param source The source publisher.
+   * @param fluxCreator The flux generator.
    */
   @Builder
   public MapRouter(
@@ -28,6 +31,7 @@ public class MapRouter<T> {
   /**
    * Get a named flux, creating if if it doesn't exist. 
    *
+   * @param source The source publisher.
    * @param destination The name.
    * @return A flux for this name
   */

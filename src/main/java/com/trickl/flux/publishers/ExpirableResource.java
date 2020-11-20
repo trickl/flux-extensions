@@ -13,6 +13,10 @@ public class ExpirableResource<T> {
 
   /**
    * Create a time limited cachable resource.
+   * 
+   * @param resourceGenerator The supplier of resources.
+   * @param expiryAccessor Determine the expiration from the resource.
+   * @param scheduler The flux scheduler.   
    */
   public ExpirableResource(
       Function<T, Mono<T>> resourceGenerator,
@@ -41,6 +45,9 @@ public class ExpirableResource<T> {
   }
 
 
+  /**
+   * Force a new resource on the next request.
+   */
   public void supplyOnNextRequest() {
     cacheableResource.supplyOnNextRequest();
   }
@@ -48,7 +55,7 @@ public class ExpirableResource<T> {
   /**
    * Get a new resource directly from the supplier.
    * 
-   * @return
+   * @return A new resource.
    */
   public Mono<T> getResourceWithoutCache() {
     return cacheableResource.getResourceWithoutCache();

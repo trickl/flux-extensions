@@ -42,6 +42,7 @@ public class OldSockJsFluxClient {
   /**
    * Get messages from the stream.
    *
+   * @param send the publisher for upstream messages.
    * @return A reactive stream of messages.
    */
   public Flux<SockJsFrame> get(Publisher<SockJsFrame> send) {

@@ -298,6 +298,9 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
 
   /**
    * Get all session details.
+   * 
+   * @param time Ignore older sessions before this time.
+   * @return A list of session details.
    */
   public List<SessionDetails> getSessionDetailsByUpdateTimeAfter(Instant time) {
     return sessionDetails.values()
@@ -323,7 +326,9 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
 
   /**
    * Get all subscriptions.
-   * @return
+   * 
+   * @param time Ignore older subscriptions before this time.
+   * @return A list of session details
    */
   public List<SubscriptionDetails> getSubscriptionsByUpdateTimeAfter(Instant time) {
     return subscriptionDetails.values()
@@ -348,6 +353,9 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
 
   /**
    * Get subscription termination time.
+   * 
+   * @param subscriptionDetails The subscription.
+   * @return The time the subscription terminated.
    */
   public static Instant getTerminationTime(SubscriptionDetails subscriptionDetails) {
     if (subscriptionDetails.getErrorTime() != null) {

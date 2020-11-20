@@ -15,6 +15,12 @@ public class RenewableResource<T> {
 
   /**
    * Create a time limited cachable resource.
+   * 
+   * @param resourceGenerator The supplier of resources.
+   * @param resourceRenewer Take a resource and make it usable again.
+   * @param expiryAccessor Determine the expiration from the resource.
+   * @param scheduler The flux scheduler.  
+   * @param resourceRenewPeriodBeforeExpiry When should we renew?
    */
   public RenewableResource(
       Supplier<Mono<T>> resourceGenerator,
@@ -60,6 +66,9 @@ public class RenewableResource<T> {
         .orElse(Instant.ofEpochMilli(0));
   }
 
+  /**
+   * Force a new resource on the next request.
+   */
   public void supplyOnNextRequest() {
     expiryableResource.supplyOnNextRequest();
   }
@@ -67,7 +76,7 @@ public class RenewableResource<T> {
   /**
    * Get a new resource directly from the supplier.
    * 
-   * @return
+   * @return A new Resource
    */
   public Mono<T> getResourceWithoutCache() {
     return expiryableResource.getResourceWithoutCache();

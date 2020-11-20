@@ -26,14 +26,21 @@ public class ConcatProcessor<T> implements Publisher<T> {
   protected final Disposable subscription;
 
   /**
-   * Create a switchable processor.
+   * Create a processor that can concatenate terminated streams.
+   * 
+   * @param <T> The type of flux element.
+   * @return A processor that can concatenate terminated streams.
    */
   public static <T> ConcatProcessor<T> create() {
     return create(0);
   }
 
   /**
-   * Create a switchable processor.
+   * Create a processor that can concatenate terminated streams.
+   * 
+   * @param <T> The type of flux element.
+   * @param history How much history to replay on subscription.
+   * @return A processor that can concatenate terminated streams.
    */
   public static <T> ConcatProcessor<T> create(int history) {
     AtomicReference<FluxSink<T>> sinkRef = new AtomicReference<FluxSink<T>>();
@@ -49,6 +56,11 @@ public class ConcatProcessor<T> implements Publisher<T> {
         publisher, sinkRef, completeSignalEmitter, completeSignalSink, subscription);
   }
 
+  /**
+   * Get a sink for inserting signals.
+   * 
+   * @return A FluxSink.
+   */
   public FluxSink<T> sink() {
     return innerSinkRef.get();
   }

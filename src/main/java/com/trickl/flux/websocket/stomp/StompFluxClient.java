@@ -195,7 +195,9 @@ public class StompFluxClient {
   /**
    * Get a flux for a destination.
    *
+   * @param <T> The type of messages on the flux.
    * @param destination The destination channel
+   * @param messageType The class of messages on the flux.
    * @param minMessageFrequency Unsubscribe if no message received in this time
    * @return A flux of messages on that channel
    */
