@@ -91,19 +91,21 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
                     destination)));
     Flux<?> connectableFlux =
         this.fluxes
-            .computeIfAbsent(streamId, fluxFactory::apply)
+            .computeIfAbsent(streamId, id -> {
+              return fluxFactory.apply(id).map(flux -> flux
+                  .doOnNext(value -> handleStreamValue(subscription, messageSender, value))
+                  .doOnSubscribe(sub -> handleStreamSubscription(subscription))
+                  .doOnCancel(() -> handleStreamCancel(id, subscription))
+                  .doOnError(error -> handleStreamError(id, subscription, error))
+                  .doOnComplete(() -> handleStreamComplete(id, subscription))
+                  .publishOn(Schedulers.parallel())
+                  .publish()
+                  .refCount(1, streamDisconnectGracePeriod));
+            })
             .orElseThrow(
-                () ->
-                    new SubscriptionFailedException(
-                        MessageFormat.format("Destination: {0} not found.", destination)))
-            .doOnNext(value -> handleStreamValue(subscription, messageSender, value))
-            .doOnSubscribe(sub -> handleStreamSubscription(subscription))
-            .doOnCancel(() -> handleStreamCancel(streamId, subscription))
-            .doOnError(error -> handleStreamError(streamId, subscription, error))
-            .doOnComplete(() -> handleStreamComplete(streamId, subscription))
-            .publishOn(Schedulers.parallel())
-            .publish()
-            .refCount(1, streamDisconnectGracePeriod);
+              () ->
+                  new SubscriptionFailedException(
+                      MessageFormat.format("Destination: {0} not found.", destination)));
 
     connectableFlux
         .doOnSubscribe(sub -> handleFluxSubscription(subscription, sub))

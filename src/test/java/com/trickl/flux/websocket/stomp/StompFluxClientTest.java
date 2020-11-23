@@ -33,6 +33,8 @@ public class StompFluxClientTest {
   private static final Pattern STOMP_HEARTBEAT_PATTERN = Pattern.compile("\\s*", Pattern.DOTALL);
   private static final Pattern STOMP_SUBSCRIBE_PATTERN = 
       Pattern.compile("SUBSCRIBE.*", Pattern.DOTALL);
+  private static final Pattern STOMP_MESSAGE_PATTERN = 
+      Pattern.compile("MESSAGE.*", Pattern.DOTALL);
 
   private static final Pattern STOMP_UNSUBSCRIBE_PATTERN = 
       Pattern.compile("UNSUBSCRIBE.*", Pattern.DOTALL);
@@ -46,6 +48,9 @@ public class StompFluxClientTest {
       "CONNECTED\nversion:1.2\nheart-beat:0,0\n\n\u0000";
   private static final String STOMP_RECEIPT_MESSAGE = 
       "RECEIPT\nreceipt-id:message-12345\n\n\u0000";
+  private static final String STOMP_MESSAGE = 
+      "MESSAGE\nsubscription: 0\nmessage-id:001\ndestination:/messages\n" 
+      + "content-type:text/plain\n\n\nhello\n\n\u0000";
 
   Mono<Void> shutdown(MockServerWithWebSocket mockServer) {
     return Mono.delay(Duration.ofMillis(500)).then(
@@ -303,6 +308,51 @@ public class StompFluxClientTest {
 
     StepVerifier.create(output)     
         .expectErrorMessage("Max retries exceeded")
-        .verify(Duration.ofMinutes(30));
+        .verify(Duration.ofMinutes(1));
+  }
+
+  @Test
+  public void testSubscribeMessage() {
+
+    MockServerWithWebSocket mockServer = new MockServerWithWebSocket();
+
+    VerifierComplete verifierComplete = mockServer.beginVerifier()
+        .thenWaitServerStartThenUpgrade(Duration.ofMinutes(5))
+        .thenExpectOpen(Duration.ofMinutes(5))
+        .thenExpectMessage(STOMP_CONNECT_PATTERN, Duration.ofMinutes(5))
+        .thenSend(STOMP_CONNECTED_NO_HB_MESSAGE)        
+        .thenExpectMessage(STOMP_SUBSCRIBE_PATTERN, Duration.ofMinutes(5))
+        .thenSend(STOMP_MESSAGE)
+        .thenExpectMessage(STOMP_DISCONNECT_PATTERN, Duration.ofMinutes(5))
+        .thenSend(STOMP_RECEIPT_MESSAGE)
+        .thenExpectClose()
+        .thenWaitServerShutdown()       
+        .thenVerify(); 
+
+    WebSocketClient client = new ReactorNettyWebSocketClient();
+    StompFluxClient stompClient =
+        StompFluxClient.builder()
+        .webSocketClient(client)
+        .transportUriProvider(mockServer::getWebSocketUri)
+        .connectionTimeout(Duration.ofSeconds(15))
+        .heartbeatReceiveFrequency(Duration.ofSeconds(0))
+        .maxRetries(2)
+        .doBeforeSessionOpen(Mono.defer(() -> {
+          log.info("Starting websocket session.");
+          mockServer.start();          
+          return Mono.delay(Duration.ofMillis(500)).then();
+        }))
+        .doAfterSessionClose(Mono.defer(() -> shutdown(mockServer)))
+        .build();
+
+    Flux<String> output = stompClient.get(
+        "/messages", String.class, Duration.ofMinutes(30));
+
+    StepVerifier.create(output)
+        .thenAwait(Duration.ofSeconds(5))      
+        .thenCancel()        
+        .verify(Duration.ofSeconds(60));
+
+    verifierComplete.waitComplete(Duration.ofSeconds(60));
   }
 }
