@@ -7,6 +7,7 @@ import com.trickl.flux.websocket.VerifierComplete;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.logging.Level;
 import java.util.regex.Pattern;
 import lombok.extern.java.Log;
 import org.junit.jupiter.api.Test;
@@ -33,8 +34,6 @@ public class StompFluxClientTest {
   private static final Pattern STOMP_HEARTBEAT_PATTERN = Pattern.compile("\\s*", Pattern.DOTALL);
   private static final Pattern STOMP_SUBSCRIBE_PATTERN = 
       Pattern.compile("SUBSCRIBE.*", Pattern.DOTALL);
-  private static final Pattern STOMP_MESSAGE_PATTERN = 
-      Pattern.compile("MESSAGE.*", Pattern.DOTALL);
 
   private static final Pattern STOMP_UNSUBSCRIBE_PATTERN = 
       Pattern.compile("UNSUBSCRIBE.*", Pattern.DOTALL);
@@ -50,7 +49,7 @@ public class StompFluxClientTest {
       "RECEIPT\nreceipt-id:message-12345\n\n\u0000";
   private static final String STOMP_MESSAGE = 
       "MESSAGE\nsubscription: 0\nmessage-id:001\ndestination:/messages\n" 
-      + "content-type:text/plain\n\n\nhello\n\n\u0000";
+      + "content-type:text/plain\n\n\n\"hello\"\n\n\u0000";
 
   Mono<Void> shutdown(MockServerWithWebSocket mockServer) {
     return Mono.delay(Duration.ofMillis(500)).then(
@@ -188,7 +187,7 @@ public class StompFluxClientTest {
         .thenVerify();
 
     Flux<String> output = stompClient.get(
-        "/messages", String.class, Duration.ofMinutes(30));
+        "/messages", String.class, Duration.ofSeconds(60));
 
     StepVerifier.create(output)
         .thenAwait(Duration.ofSeconds(10))      
@@ -346,11 +345,15 @@ public class StompFluxClientTest {
         .build();
 
     Flux<String> output = stompClient.get(
-        "/messages", String.class, Duration.ofMinutes(30));
+        "/messages", String.class, Duration.ofSeconds(60))
+        .doOnNext((String message) -> {
+          log.log(Level.INFO, "\u001B[32mMESSAGE  ↑ {0}\u001B[0m", new Object[] {message});
+        });
 
-    StepVerifier.create(output)
-        .thenAwait(Duration.ofSeconds(5))      
-        .thenCancel()        
+    StepVerifier.create(output, 256)
+        .expectNext("hello")        
+        .expectNoEvent(Duration.ofSeconds(5))
+        .thenCancel()                 
         .verify(Duration.ofSeconds(60));
 
     verifierComplete.waitComplete(Duration.ofSeconds(60));

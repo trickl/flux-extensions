@@ -167,6 +167,7 @@ public class TopicRouter<T> {
             }
           })
           .build())
+          .filter(value -> isConnected)
           .filter(topicFilter.apply(topic));
     });
   }

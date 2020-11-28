@@ -304,8 +304,8 @@ public class RobustWebSocketFluxClient<S, T> {
             .maxRetries(maxRetries)
             .name("ConnectedStreamContext")
             .build())
-        .share()
-        .log("sharedStream", Level.INFO);
+        .log("sharedStream", Level.INFO)
+        .share();
 
     log.info("Returning SharedStreamContext.");
     return new SharedStreamContext<>(topicContext, sharedStream, isTerminated);
@@ -377,8 +377,10 @@ public class RobustWebSocketFluxClient<S, T> {
             .isRecurring(false)
             .isResponse(value -> true)
             .timeoutExceptionMapper(
-                (error, period) ->
-                    new ConnectionTimeoutException("No connection within " + period, error))
+                (error, period) -> {
+                    log.info("Creating connection timeout exception.");       
+                    return new ConnectionTimeoutException("No connection within " + period, error);
+                })
             .build();
     Publisher<T> connectionExpectation =
         connectionExpectationFactory.apply(context.getConnectionExpectationProcessor(), connected);

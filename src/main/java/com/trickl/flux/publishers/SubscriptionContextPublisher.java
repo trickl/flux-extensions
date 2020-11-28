@@ -8,17 +8,17 @@ import org.reactivestreams.Subscriber;
 import reactor.core.publisher.Flux;
 
 @Builder
-public class SubscriptionContextPublisher<T, S> implements Publisher<T> {
+public class SubscriptionContextPublisher<T, ContextT> implements Publisher<T> {
 
   private Publisher<T> source;
 
-  private Supplier<S> doOnSubscribe;
+  private Supplier<ContextT> doOnSubscribe;
 
-  private Consumer<S> doOnCancel;
+  private Consumer<ContextT> doOnCancel;
 
   @Override
   public void subscribe(Subscriber<? super T> subscriber) {
-    S context = doOnSubscribe != null ? doOnSubscribe.get() : null;      
+    ContextT context = doOnSubscribe != null ? doOnSubscribe.get() : null;      
     Flux.from(source)
         .doOnCancel(() -> {
           if (doOnCancel != null) {
