@@ -17,6 +17,7 @@ public class SubscriptionIdPublisher<T> implements Publisher<T> {
    * @param source The underlying source
    * @param doOnSubscribe the subscribe handler
    * @param doOnCancel the cancel handler
+   * @param doOnTerminate the terminate handler
    */
   @Builder
   public SubscriptionIdPublisher(
