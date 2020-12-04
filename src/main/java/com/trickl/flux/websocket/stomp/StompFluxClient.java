@@ -155,16 +155,20 @@ public class StompFluxClient {
     return Optional.of(StompDisconnectFrame.builder().build());
   }
 
-  protected List<StompFrame> buildSubscribeFrames(Set<TopicSubscription<String>> topics) {
+  protected List<StompFrame> buildSubscribeFrames(
+      Set<TopicSubscription<String>> addedTopics,
+      Set<TopicSubscription<String>> allTopics) {
     log.info("Building subscribe frames");
-    return topics.stream().map(topic -> StompSubscribeFrame.builder()
+    return addedTopics.stream().map(topic -> StompSubscribeFrame.builder()
     .destination(topic.getTopic())
     .subscriptionId(String.valueOf(topic.getId()))
     .build()).collect(Collectors.toList());
   }
 
-  protected List<StompFrame> buildUnsubscribeFrames(Set<TopicSubscription<String>> topics) {
-    return topics.stream().map(topic -> StompUnsubscribeFrame.builder()
+  protected List<StompFrame> buildUnsubscribeFrames(
+      Set<TopicSubscription<String>> removedTopics,
+      Set<TopicSubscription<String>> allTopics) {
+    return removedTopics.stream().map(topic -> StompUnsubscribeFrame.builder()
     .subscriptionId(String.valueOf(topic.getId()))
     .build()).collect(Collectors.toList());
   }

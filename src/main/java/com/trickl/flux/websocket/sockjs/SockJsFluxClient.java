@@ -17,6 +17,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.BiFunction;
 import java.util.function.BiPredicate;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -48,8 +49,10 @@ public class SockJsFluxClient<TopicT> {
       ObjectMapper objectMapper,
       Mono<HttpHeaders> webSocketHeadersProvider,
       BiPredicate<SockJsFrame, TopicT> isDataFrameForDestination,
-      Function<Set<TopicSubscription<TopicT>>, List<SockJsFrame>> buildSubscribeFrames,
-      Function<Set<TopicSubscription<TopicT>>, List<SockJsFrame>> buildUnsubscribeFrames,
+      BiFunction<Set<TopicSubscription<TopicT>>, Set<TopicSubscription<TopicT>>, List<SockJsFrame>> 
+          buildSubscribeFrames,
+      BiFunction<Set<TopicSubscription<TopicT>>, Set<TopicSubscription<TopicT>>, List<SockJsFrame>> 
+          buildUnsubscribeFrames,
       Duration heartbeatSendFrequency,
       Duration heartbeatReceiveFrequency,
       Duration connectionTimeout,

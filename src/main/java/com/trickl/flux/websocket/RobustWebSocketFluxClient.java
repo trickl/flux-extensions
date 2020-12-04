@@ -100,12 +100,16 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
   private Supplier<Optional<T>> buildDisconnectFrame = () -> Optional.empty();
 
   @Builder.Default
-  private Function<Set<TopicSubscription<TopicT>>, List<T>> buildSubscribeFrames = 
-      (Set<TopicSubscription<TopicT>> topics) -> Collections.emptyList();
+  private BiFunction<Set<TopicSubscription<TopicT>>, Set<TopicSubscription<TopicT>>, List<T>> 
+      buildSubscribeFrames =  (Set<TopicSubscription<TopicT>> addedTopics, 
+      Set<TopicSubscription<TopicT>> allTopics) ->
+       Collections.emptyList();
 
   @Builder.Default
-  private Function<Set<TopicSubscription<TopicT>>, List<T>> buildUnsubscribeFrames = 
-      (Set<TopicSubscription<TopicT>> topics) -> Collections.emptyList();
+  private BiFunction<Set<TopicSubscription<TopicT>>, Set<TopicSubscription<TopicT>>, List<T>> 
+      buildUnsubscribeFrames =  (Set<TopicSubscription<TopicT>> removedTopics, 
+      Set<TopicSubscription<TopicT>> allTopics) ->
+       Collections.emptyList();
 
   @Builder.Default
   private Function<Throwable, Optional<T>> buildErrorFrame = 
@@ -192,13 +196,15 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
         Flux.from(topicContext.getTopicRouter().getSubscriptionActions())
           .doOnNext(action -> {
             if (action.getType().equals(SetActionType.Add)) {
-              List<T> subscriptionFrames = buildSubscribeFrames.apply(action.getDelta());
+              List<T> subscriptionFrames = buildSubscribeFrames.apply(action.getDelta(),
+                  action.getSet());
               subscriptionFrames.stream().forEach(subscriptionFrame -> {
                 streamRequestProcessor.sink()
                     .next(subscriptionFrame);
               });
             } else if (action.getType().equals(SetActionType.Remove)) {
-              List<T> unsubscribeFrames = buildUnsubscribeFrames.apply(action.getDelta());
+              List<T> unsubscribeFrames = buildUnsubscribeFrames.apply(action.getDelta(),
+                  action.getSet());
               unsubscribeFrames.stream().forEach(unsubscribeFrame -> {
                 streamRequestProcessor.sink()
                     .next(unsubscribeFrame);
