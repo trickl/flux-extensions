@@ -322,6 +322,7 @@ public class StompFluxClientTest {
         .thenSend(STOMP_CONNECTED_NO_HB_MESSAGE)        
         .thenExpectMessage(STOMP_SUBSCRIBE_PATTERN, Duration.ofMinutes(5))
         .thenSend(STOMP_MESSAGE)
+        .thenExpectMessage(STOMP_UNSUBSCRIBE_PATTERN, Duration.ofMinutes(5))
         .thenExpectMessage(STOMP_DISCONNECT_PATTERN, Duration.ofMinutes(5))
         .thenSend(STOMP_RECEIPT_MESSAGE)
         .thenExpectClose()

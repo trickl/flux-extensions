@@ -12,6 +12,8 @@ import com.trickl.flux.mappers.ExpectedResponseTimeoutFactory;
 import com.trickl.flux.mappers.FluxSinkAdapter;
 import com.trickl.flux.mappers.ThrowableMapper;
 import com.trickl.flux.mappers.ThrowingFunction;
+import com.trickl.flux.monitors.SetAction;
+import com.trickl.flux.monitors.SetActionType;
 import com.trickl.flux.publishers.CacheableResource;
 import com.trickl.flux.publishers.ConcatProcessor;
 import com.trickl.flux.retry.ExponentialBackoffRetry;
@@ -54,14 +56,15 @@ import reactor.core.publisher.Mono;
 
 @Log
 @Builder
-public class RobustWebSocketFluxClient<S, T> {
+public class RobustWebSocketFluxClient<S, T, TopicT> {
   private final WebSocketClient webSocketClient;
 
   @Getter private final Supplier<URI> transportUriProvider;
 
   @Getter private final BiFunction<FluxSink<S>, Publisher<S>, WebSocketHandler> handlerFactory;
 
-  @Builder.Default private Supplier<HttpHeaders> webSocketHeadersProvider = HttpHeaders::new;
+  @Builder.Default private Mono<HttpHeaders> webSocketHeadersProvider 
+      = Mono.fromSupplier(HttpHeaders::new);
 
   @Builder.Default private Duration disconnectionReceiptTimeout = Duration.ofSeconds(5);
 
@@ -82,7 +85,7 @@ public class RobustWebSocketFluxClient<S, T> {
 
   @Builder.Default private Predicate<T> isDisconnectReceiptFrame = frame -> true;
 
-  @Builder.Default private BiPredicate<T, String> isDataFrameForDestination =
+  @Builder.Default private BiPredicate<T, TopicT> isDataFrameForDestination =
       (frame, destination) -> true;
 
   @Builder.Default
@@ -97,12 +100,12 @@ public class RobustWebSocketFluxClient<S, T> {
   private Supplier<Optional<T>> buildDisconnectFrame = () -> Optional.empty();
 
   @Builder.Default
-  private Function<Set<TopicSubscription>, List<T>> buildSubscribeFrames = 
-      (Set<TopicSubscription> topics) -> Collections.emptyList();
+  private Function<Set<TopicSubscription<TopicT>>, List<T>> buildSubscribeFrames = 
+      (Set<TopicSubscription<TopicT>> topics) -> Collections.emptyList();
 
   @Builder.Default
-  private Function<Set<TopicSubscription>, List<T>> buildUnsubscribeFrames = 
-      (Set<TopicSubscription> topics) -> Collections.emptyList();
+  private Function<Set<TopicSubscription<TopicT>>, List<T>> buildUnsubscribeFrames = 
+      (Set<TopicSubscription<TopicT>> topics) -> Collections.emptyList();
 
   @Builder.Default
   private Function<Throwable, Optional<T>> buildErrorFrame = 
@@ -128,29 +131,31 @@ public class RobustWebSocketFluxClient<S, T> {
   public static final String ANSI_RESET = "\u001B[0m";
   public static final String ANSI_RED = "\u001B[31m";
 
-  private final CacheableResource<SharedStreamContext<T>> sharedStreamContext
-      = new CacheableResource<SharedStreamContext<T>>(
+  private final CacheableResource<SharedStreamContext<T, TopicT>> sharedStreamContext
+      = new CacheableResource<SharedStreamContext<T, TopicT>>(
           context -> getSharedStreamContexts().cache(1).next(),
           context -> {
             return !context.getIsTerminated().get(); 
           });
 
-  protected TopicContext<T> createTopicContext() {
+  protected TopicContext<T, TopicT> createTopicContext() {
     log.info("Creating topic context");
-    EmitterProcessor<ConnectedStreamContext<T>> connectedContextEmitter = EmitterProcessor.create();
-    FluxSink<ConnectedStreamContext<T>> connectedContextSink = connectedContextEmitter.sink();
+    EmitterProcessor<ConnectedStreamContext<T, TopicT>> connectedContextEmitter 
+        = EmitterProcessor.create();
+    FluxSink<ConnectedStreamContext<T, TopicT>> connectedContextSink 
+        = connectedContextEmitter.sink();
 
     EmitterProcessor<Long> disconnectedSignalEmitter = EmitterProcessor.create();
     FluxSink<Long> disconnectedSignalSink = disconnectedSignalEmitter.sink();
 
-    Publisher<ConnectedStreamContext<T>> connectedContexts = connectedContextEmitter
+    Publisher<ConnectedStreamContext<T, TopicT>> connectedContexts = connectedContextEmitter
         .log("connectedSignal")
         .doOnNext(value -> log.info(ANSI_RED + "connected" + ANSI_RESET)).share();
     Publisher<Long> disconnectedSignal = disconnectedSignalEmitter
         .log("disconnectedSignal")
         .doOnNext(value -> log.info(ANSI_RED + "disconnected" + ANSI_RESET)).share();
 
-    TopicRouter<T> topicRouter = TopicRouter.<T>builder()
+    TopicRouter<T, TopicT> topicRouter = TopicRouter.<T, TopicT>builder()
         .startConnected(false)
         .connectedSignal(connectedContexts) 
         .disconnectedSignal(disconnectedSignal)
@@ -158,7 +163,7 @@ public class RobustWebSocketFluxClient<S, T> {
         .topicFilter(destination -> frame -> isDataFrameForDestination.test(frame, destination))    
         .build();
 
-    return new TopicContext<T>(
+    return new TopicContext<T, TopicT>(
       connectedContextSink,
       connectedContexts,
       disconnectedSignalSink,   
@@ -166,7 +171,7 @@ public class RobustWebSocketFluxClient<S, T> {
       topicRouter);
   }
 
-  protected ResponseContext<T> createResponseContext(TopicContext<T> topicContext) {
+  protected ResponseContext<T, TopicT> createResponseContext(TopicContext<T, TopicT> topicContext) {
     log.info("Creating response context");
     EmitterProcessor<Long> beforeOpenSignalEmitter = EmitterProcessor.create();
     FluxSink<Long> beforeOpenSignalSink = beforeOpenSignalEmitter.sink();
@@ -182,28 +187,24 @@ public class RobustWebSocketFluxClient<S, T> {
 
     ConcatProcessor<T> streamRequestProcessor =
         ConcatProcessor.create();
-    
-    Publisher<Set<TopicSubscription>> subscriptions = Flux.from(
-        topicContext.getTopicRouter().getSubscriptions()).log("subscriptions");
-    Publisher<Set<TopicSubscription>> subscribeActionFlux = Flux.from(subscriptions)
-        .doOnNext(topics -> {
-          List<T> subscriptionFrames = buildSubscribeFrames.apply(topics);
-          subscriptionFrames.stream().forEach(subscriptionFrame -> {
-            streamRequestProcessor.sink()
-                .next(subscriptionFrame);
-          });          
-        }).ignoreElements().log("subscriptionsActions");
-
-    Publisher<Set<TopicSubscription>> cancellations = 
-        topicContext.getTopicRouter().getCancellations();
-    Publisher<Set<TopicSubscription>> unsubscribeActionFlux = Flux.from(cancellations)
-        .doOnNext(topics -> {
-          List<T> unsubscribeFrames = buildUnsubscribeFrames.apply(topics);
-          unsubscribeFrames.stream().forEach(unsubscribeFrame -> {
-            streamRequestProcessor.sink()
-                .next(unsubscribeFrame);
-          });          
-        }).ignoreElements();
+        
+    Publisher<SetAction<TopicSubscription<TopicT>>> subscriptionsActionsFlux = 
+        Flux.from(topicContext.getTopicRouter().getSubscriptionActions())
+          .doOnNext(action -> {
+            if (action.getType().equals(SetActionType.Add)) {
+              List<T> subscriptionFrames = buildSubscribeFrames.apply(action.getDelta());
+              subscriptionFrames.stream().forEach(subscriptionFrame -> {
+                streamRequestProcessor.sink()
+                    .next(subscriptionFrame);
+              });
+            } else if (action.getType().equals(SetActionType.Remove)) {
+              List<T> unsubscribeFrames = buildUnsubscribeFrames.apply(action.getDelta());
+              unsubscribeFrames.stream().forEach(unsubscribeFrame -> {
+                streamRequestProcessor.sink()
+                    .next(unsubscribeFrame);
+              });   
+            }
+          }).log("subscriptionActions");
 
     return new ResponseContext<>(
         topicContext,
@@ -213,11 +214,11 @@ public class RobustWebSocketFluxClient<S, T> {
         connectionExpectationProcessor,
         disconnectReceiptProcessor,
         streamRequestProcessor,
-        Flux.merge(subscribeActionFlux, unsubscribeActionFlux));
+        subscriptionsActionsFlux);
   }
 
-  protected ConnectedStreamContext<T> createConnectedStreamContext(
-      ResponseContext<T> responseContext, Flux<T> source, T connectedFrame) {
+  protected ConnectedStreamContext<T, TopicT> createConnectedStreamContext(
+      ResponseContext<T, TopicT> responseContext, Flux<T> source, T connectedFrame) {
     log.info("Creating connected stream context");
 
     ConcatProcessor<Duration> heartbeatSendFrequencyProcessor =
@@ -282,8 +283,9 @@ public class RobustWebSocketFluxClient<S, T> {
         heartbeatReceiveFrequency);
   }
 
-  protected SharedStreamContext<T> createSharedStreamContext(
-      TopicContext<T> topicContext, Flux<ConnectedStreamContext<T>> connectedContexts) {
+  protected SharedStreamContext<T, TopicT> createSharedStreamContext(
+      TopicContext<T, TopicT> topicContext, 
+      Flux<ConnectedStreamContext<T, TopicT>> connectedContexts) {
     log.info("Creating shared stream context");
 
     AtomicBoolean isTerminated = new AtomicBoolean(false);
@@ -305,26 +307,28 @@ public class RobustWebSocketFluxClient<S, T> {
             .name("ConnectedStreamContext")
             .build())
         .log("sharedStream", Level.INFO)
-        .share();
+        .publish()
+        .refCount(1, Duration.ofSeconds(1));
 
     log.info("Returning SharedStreamContext.");
     return new SharedStreamContext<>(topicContext, sharedStream, isTerminated);
   }
 
-  protected Flux<SharedStreamContext<T>> getSharedStreamContexts() {
+  protected Flux<SharedStreamContext<T, TopicT>> getSharedStreamContexts() {
     return Mono.fromSupplier(this::createTopicContext).cache()
-        .<SharedStreamContext<T>>flatMapMany(
+        .<SharedStreamContext<T, TopicT>>flatMapMany(
           topicContext -> {
-            return Flux.<SharedStreamContext<T>>defer(() -> {
-              Flux<ConnectedStreamContext<T>> connectedContexts = 
-                  getConnectedStreamContexts(createResponseContext(topicContext));
+            return Flux.<SharedStreamContext<T, TopicT>>defer(() -> {
+              Flux<ConnectedStreamContext<T, TopicT>> connectedContexts = 
+                  getConnectedStreamContexts(createResponseContext(topicContext))
+                  .log("connectedContexts");
               return Mono.just(createSharedStreamContext(topicContext, connectedContexts));
             });            
           });
   }
 
-  protected Flux<ConnectedStreamContext<T>> getConnectedStreamContexts(
-      ResponseContext<T> context) {
+  protected Flux<ConnectedStreamContext<T, TopicT>> getConnectedStreamContexts(
+      ResponseContext<T, TopicT> context) {
     log.info("Creating base stream context mono");
     Publisher<T> sendWithResponse =
         Flux.merge(Flux.from(context.getStreamRequestProcessor()))
@@ -341,7 +345,7 @@ public class RobustWebSocketFluxClient<S, T> {
             .webSocketClient(webSocketClient)
             .transportUriProvider(transportUriProvider)
             .handlerFactory(handlerFactory)
-            .webSocketHeadersProvider(Mono.fromSupplier(webSocketHeadersProvider))        
+            .webSocketHeadersProvider(webSocketHeadersProvider)        
             .doBeforeOpen(doBeforeSessionOpen.then(
                 Mono.fromRunnable(() -> context.getBeforeOpenSignalSink().next(1L))))
             .doAfterOpen(
@@ -363,7 +367,7 @@ public class RobustWebSocketFluxClient<S, T> {
             .flatMap(new ThrowableMapper<T, T>(this::handleErrorFrame))
             .log("sharedBase")     
             .mergeWith(
-              Flux.from(context.getSubscriptionActionsFlux()).map(none -> null)
+              Flux.from(context.getSubscriptionActionsFlux()).flatMap(none -> Mono.empty())
             )
             .share()
             .log("base", Level.INFO);
@@ -393,13 +397,13 @@ public class RobustWebSocketFluxClient<S, T> {
             .share()
             .log("connectedWithExpectations", Level.INFO);
 
-    Flux<ConnectedStreamContext<T>> connectedContexts =
-        connectedWithExpectations.<ConnectedStreamContext<T>>flatMap(
+    Flux<ConnectedStreamContext<T, TopicT>> connectedContexts =
+        connectedWithExpectations.<ConnectedStreamContext<T, TopicT>>flatMap(
           connectedFrame ->
             Mono.fromSupplier(() -> createConnectedStreamContext(
               context, base, connectedFrame))
                 .log("ConnectedStreamContextSupplier", Level.INFO)
-                .<ConnectedStreamContext<T>>map(
+                .<ConnectedStreamContext<T, TopicT>>map(
                     connectedStreamContext -> {
                       connectedStreamContext
                           .getResponseContext()
@@ -549,7 +553,7 @@ public class RobustWebSocketFluxClient<S, T> {
    * @return A flux of messages on that channel
    */
   public Flux<T> get(
-      String destination, Duration minMessageFrequency) {
+      TopicT destination, Duration minMessageFrequency) {
     return sharedStreamContext.getResource().flatMapMany(
       context -> context
           .getTopicContext()
@@ -568,21 +572,21 @@ public class RobustWebSocketFluxClient<S, T> {
   }
 
   @Value
-  private static class TopicContext<T> {
-    protected final FluxSink<ConnectedStreamContext<T>> connectedContextSink;
+  private static class TopicContext<T, TopicT> {
+    protected final FluxSink<ConnectedStreamContext<T, TopicT>> connectedContextSink;
 
-    protected final Publisher<ConnectedStreamContext<T>> connectedContexts;
+    protected final Publisher<ConnectedStreamContext<T, TopicT>> connectedContexts;
 
     protected final FluxSink<Long> disconnectedSignalSink;
 
     protected final Publisher<Long> disconnectedSignal;
 
-    protected final TopicRouter<T> topicRouter;
+    protected final TopicRouter<T, TopicT> topicRouter;
   }
 
   @Value
-  private static class ResponseContext<T> {
-    protected final TopicContext<T> topicContext;
+  private static class ResponseContext<T, TopicT> {
+    protected final TopicContext<T, TopicT> topicContext;
 
     protected final FluxSink<Long> beforeOpenSignalSink;
 
@@ -596,12 +600,12 @@ public class RobustWebSocketFluxClient<S, T> {
 
     protected final ConcatProcessor<T> streamRequestProcessor;    
 
-    protected final Publisher<Set<TopicSubscription>> subscriptionActionsFlux;
+    protected final Publisher<SetAction<TopicSubscription<TopicT>>>  subscriptionActionsFlux;
   }
 
   @Value
-  private static class ConnectedStreamContext<T> {
-    protected final ResponseContext<T> responseContext;
+  private static class ConnectedStreamContext<T, TopicT> {
+    protected final ResponseContext<T, TopicT> responseContext;
 
     protected final Flux<T> stream;
 
@@ -615,8 +619,8 @@ public class RobustWebSocketFluxClient<S, T> {
   }
 
   @Value
-  private static class SharedStreamContext<T> {    
-    protected final TopicContext<T> topicContext;
+  private static class SharedStreamContext<T, TopicT> {    
+    protected final TopicContext<T, TopicT> topicContext;
 
     protected final Flux<T> sharedStream;
 

@@ -5,7 +5,7 @@ import lombok.Value;
 
 @Value
 @EqualsAndHashCode
-public class TopicSubscription {
+public class TopicSubscription<TopicT> {
   private int id;
-  private String topic;
+  private TopicT topic;
 }

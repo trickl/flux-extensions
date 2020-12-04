@@ -16,6 +16,8 @@ public class SubscriptionContextPublisher<T, ContextT> implements Publisher<T> {
 
   private Consumer<ContextT> doOnCancel;
 
+  private Consumer<ContextT> doOnTerminate;
+
   @Override
   public void subscribe(Subscriber<? super T> subscriber) {
     ContextT context = doOnSubscribe != null ? doOnSubscribe.get() : null;      
@@ -23,6 +25,11 @@ public class SubscriptionContextPublisher<T, ContextT> implements Publisher<T> {
         .doOnCancel(() -> {
           if (doOnCancel != null) {
             doOnCancel.accept(context);
+          }
+        })
+        .doOnTerminate(() -> {
+          if (doOnTerminate != null) {
+            doOnTerminate.accept(context);
           }
         })
         .subscribe(subscriber);

@@ -1,5 +1,7 @@
 package com.trickl.flux.routing;
 
+import com.trickl.flux.monitors.SetAction;
+import com.trickl.flux.monitors.SetMonitor;
 import com.trickl.flux.publishers.ConcatProcessor;
 import com.trickl.flux.publishers.SubscriptionContextPublisher;
 import java.text.MessageFormat;
@@ -21,26 +23,25 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 @Log
-public class TopicRouter<T> {
-  private final Function<String, Predicate<T>> topicFilter;
+public class TopicRouter<T, TopicT> {
+  private final Function<TopicT, Predicate<T>> topicFilter;
 
-  private final ConcatProcessor<Set<TopicSubscription>> subscriptionProcessor;
+  private final ConcatProcessor<Set<TopicSubscription<TopicT>>> subscriptionProcessor;
 
-  private final ConcatProcessor<Set<TopicSubscription>> cancelProcessor;
+  private final ConcatProcessor<Set<TopicSubscription<TopicT>>> unsubscribeProcessor;
 
   private final Flux<Boolean> isConnectedFlux;
 
   private final Disposable isConnectedSubscription;
 
   @Getter
-  private final Publisher<Set<TopicSubscription>> subscriptions;
-
-  @Getter
-  private final Publisher<Set<TopicSubscription>> cancellations;
+  private final Publisher<SetAction<TopicSubscription<TopicT>>> subscriptionActions;
 
   private final AtomicInteger maxSubscriptionId = new AtomicInteger(0);
 
-  private final MapRouter<T> mapRouter;
+  private final AtomicInteger lastDisconnectionMaxId = new AtomicInteger(0);
+
+  private final MapRouter<T, TopicT> mapRouter;
 
   private static final Duration DEFAULT_SUBSCRIPTION_THROTTLE = Duration.ofSeconds(1);
 
@@ -58,7 +59,7 @@ public class TopicRouter<T> {
    */
   @Builder
   public TopicRouter(
-      Function<String, Predicate<T>> topicFilter,
+      Function<TopicT, Predicate<T>> topicFilter,
       Publisher<?> connectedSignal,
       Publisher<?> disconnectedSignal,
       Duration subscriptionThrottleDuration,
@@ -68,10 +69,11 @@ public class TopicRouter<T> {
     Duration subThrottleDuration = Optional.ofNullable(subscriptionThrottleDuration)
         .orElse(DEFAULT_SUBSCRIPTION_THROTTLE);
     subscriptionProcessor = ConcatProcessor.create();
-    subscriptions = Flux.from(subscriptionProcessor)
+
+    Publisher<Set<TopicSubscription<TopicT>>> subscriptions = Flux.from(subscriptionProcessor)
         .buffer(subThrottleDuration)
         .map(list -> {
-          Set<TopicSubscription> combined = list.stream()
+          Set<TopicSubscription<TopicT>> combined = list.stream()
               .flatMap(set -> set.stream())
               .collect(Collectors.toSet());
           return combined;
@@ -80,17 +82,23 @@ public class TopicRouter<T> {
 
     Duration cancelThrottlePeriod = Optional.ofNullable(cancelThrottleDuration)
          .orElse(DEFAULT_CANCEL_THROTTLE);
-    cancelProcessor =  ConcatProcessor.create();
+    unsubscribeProcessor =  ConcatProcessor.create();
 
-    cancellations = Flux.from(cancelProcessor)
+    Publisher<Set<TopicSubscription<TopicT>>> unsubscriptions = Flux.from(unsubscribeProcessor)
         .buffer(cancelThrottlePeriod)
         .map(list -> {
-          Set<TopicSubscription> combined = list.stream()
+          Set<TopicSubscription<TopicT>> combined = list.stream()
               .flatMap(set -> set.stream())
               .collect(Collectors.toSet());
           return combined;
-        });        
-
+        });
+        
+        
+    subscriptionActions = SetMonitor.<TopicSubscription<TopicT>>builder()
+        .addPublisher(subscriptions)
+        .removePublisher(unsubscriptions)
+        .clearPublisher(Optional.ofNullable(disconnectedSignal).orElse(Mono.empty()))
+        .build();
 
     this.topicFilter = Optional.ofNullable(topicFilter).orElse(topic -> value -> true);
 
@@ -103,6 +111,9 @@ public class TopicRouter<T> {
 
     Publisher<Boolean> disconnectedFlux = disconnectedSignal == null ? Mono.empty() 
         : Flux.from(disconnectedSignal).map(value -> false)
+        .doOnNext(signal -> {
+          lastDisconnectionMaxId.set(maxSubscriptionId.get());
+        })
         .log("DisconnectedSignal", Level.FINE);  
 
     isConnectedFlux = Flux.merge(
@@ -114,7 +125,7 @@ public class TopicRouter<T> {
 
     isConnectedSubscription = isConnectedFlux.subscribe();
 
-    mapRouter = MapRouter.<T>builder()
+    mapRouter = MapRouter.<T, TopicT>builder()
         .fluxCreator(this::create)
         .build();
   }
@@ -127,9 +138,10 @@ public class TopicRouter<T> {
       isConnectedSubscription.dispose();
     }
     subscriptionProcessor.complete();
+    unsubscribeProcessor.complete();
   }
 
-  public Flux<T> route(Publisher<T> source, String topic) {
+  public Flux<T> route(Publisher<T> source, TopicT topic) {
     return mapRouter.route(source, topic);
   }
 
@@ -140,35 +152,42 @@ public class TopicRouter<T> {
    * @param topic The topic name.
    * @return A flux filtered for this particular topic
   */
-  protected Flux<T> create(Publisher<T> source, String topic) {
-    return isConnectedFlux.flatMap(isConnected -> {
-      return Flux.from(SubscriptionContextPublisher.<T, TopicSubscription>builder()
+  protected Flux<T> create(Publisher<T> source, TopicT topic) {
+    return isConnectedFlux.switchMap(isConnected -> {
+      return Flux.from(SubscriptionContextPublisher.<T, TopicSubscription<TopicT>>builder()
           .source(source)
-          .doOnSubscribe(() -> {
-            Integer id = maxSubscriptionId.incrementAndGet();
-            String message = MessageFormat.format(
-                "{0} subscribing to topic {1}, is connected? {2} ",
-                 id, topic, isConnected);            
-            log.info(message);
-            TopicSubscription topicSubscription = new TopicSubscription(id, topic);
-            if (isConnected) {
-              subscriptionProcessor.sink().next(Collections.singleton(topicSubscription));
-            }
-            return topicSubscription;
-          })
-          .doOnCancel(topicSubscription -> {
-            String message = MessageFormat.format(
-                "{0} unsubscribing to topic {1}, is connected? {2} ",
-                 topicSubscription.getId(), topicSubscription.getTopic(), isConnected);            
-            log.info(message);
-            
-            if (isConnected) {
-              cancelProcessor.sink().next(Collections.singleton(topicSubscription));
-            }
-          })
+          .doOnSubscribe(() -> handleOnSubscribe(topic, isConnected))
+          .doOnCancel(topicSubscription -> handleOnUnsubscribe(topicSubscription))
+          .doOnTerminate(topicSubscription -> handleOnUnsubscribe(topicSubscription))
           .build())
-          .filter(value -> isConnected)
+          .share()
+          //.filter(value -> isConnected)
           .filter(topicFilter.apply(topic));
     });
+  }
+
+  private TopicSubscription<TopicT> handleOnSubscribe(
+      TopicT topic,
+      boolean isConnected) {
+    Integer id = isConnected ? maxSubscriptionId.incrementAndGet() : -1;
+    String message = MessageFormat.format(
+        "{0} subscribing to topic {1}, is connected? {2} ",
+          id, topic, isConnected);            
+    log.info(message);
+    TopicSubscription<TopicT> topicSubscription = new TopicSubscription<TopicT>(id, topic);
+    if (isConnected) {
+      subscriptionProcessor.sink().next(Collections.singleton(topicSubscription));
+    }
+    return topicSubscription;
+  }
+
+  private void handleOnUnsubscribe(TopicSubscription<TopicT> topicSubscription) {    
+    if (topicSubscription.getId() > lastDisconnectionMaxId.get()) {
+      String message = MessageFormat.format(
+          "{0} unsubscribing to topic {1}",
+          topicSubscription.getId(), topicSubscription.getTopic());            
+      log.info(message);  
+      unsubscribeProcessor.sink().next(Collections.singleton(topicSubscription));
+    }
   }
 }

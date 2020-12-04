@@ -1,18 +1,16 @@
 package com.trickl.flux.routing;
 
-import com.trickl.flux.config.WebSocketConfiguration;
+import com.trickl.flux.monitors.SetAction;
+import com.trickl.flux.monitors.SetActionType;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import lombok.extern.java.Log;
 import org.junit.jupiter.api.Test;
 import org.reactivestreams.Publisher;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.TestPropertySource;
 import reactor.core.Disposable;
 import reactor.core.publisher.EmitterProcessor;
 import reactor.core.publisher.Flux;
@@ -21,8 +19,6 @@ import reactor.test.StepVerifier;
 
 @Log
 @ActiveProfiles({"unittest"})
-@TestPropertySource(properties = { "spring.config.location=classpath:application.yml" })
-@SpringBootTest(classes = WebSocketConfiguration.class)
 public class TopicRouterTest {
 
   @Test
@@ -30,7 +26,7 @@ public class TopicRouterTest {
 
     Flux<Integer> source = Flux.just(1, 2, 3, 4, 5);
 
-    TopicRouter<Integer> topicRouter = TopicRouter.<Integer>builder()
+    TopicRouter<Integer, String> topicRouter = TopicRouter.<Integer, String>builder()
         .topicFilter(topic -> "/evens".equals(topic)
             ? value -> value % 2 == 0
             : value -> value % 2 == 1)
@@ -55,16 +51,18 @@ public class TopicRouterTest {
 
   @Test
   public void testSubscribeIfAlreadyConnected() {
-    Flux<Integer> source = Flux.just(1, 2, 3);
+    EmitterProcessor<Integer> source = EmitterProcessor.create();
+    FluxSink<Integer> sourceSink = source.sink();
 
-    TopicRouter<Integer> topicRouter = TopicRouter.<Integer>builder()
+    TopicRouter<Integer, String> topicRouter = TopicRouter.<Integer, String>builder()
         .subscriptionThrottleDuration(Duration.ofMillis(100))
         .build();
 
     AtomicReference<Disposable> subASubscription = new AtomicReference<>();
     AtomicReference<Disposable> subBSubscription = new AtomicReference<>();
 
-    Publisher<Set<TopicSubscription>> subscriptions = Flux.from(topicRouter.getSubscriptions())
+    Publisher<SetAction<TopicSubscription<String>>> subscriptions
+        = Flux.from(topicRouter.getSubscriptionActions())
         .log("subscriptions");
     
     StepVerifier.create(subscriptions)
@@ -73,18 +71,36 @@ public class TopicRouterTest {
           subASubscription.set(topicRouter.route(source, "/sub-a").subscribe());
         })
         .thenAwait(Duration.ofMillis(300)) // Wait beyond throttle
-        .expectNextMatches(subs -> subs.equals(Collections.singleton(
-          new TopicSubscription(1, "/sub-a"))))
+        .expectNextMatches(subs -> subs.equals(new SetAction<>(SetActionType.Add,
+            Collections.singleton(
+            new TopicSubscription<String>(1, "/sub-a")),
+            Collections.singleton(
+            new TopicSubscription<String>(1, "/sub-a"))
+          )))
         .then(() -> {
           // Now subscribe B
           subBSubscription.set(topicRouter.route(source, "/sub-b").subscribe());
         })            
-        .expectNextMatches(subs -> subs.equals(Collections.singleton(
-            new TopicSubscription(2, "/sub-b"))))
+        .expectNextMatches(subs -> subs.equals(new SetAction<>(SetActionType.Add,
+            Collections.singleton(
+            new TopicSubscription<String>(2, "/sub-b")),
+            new HashSet<>(Arrays.asList(
+              new TopicSubscription<String>(1, "/sub-a"), 
+              new TopicSubscription<String>(2, "/sub-b"))
+              ))))
         .then(() -> {
-          topicRouter.complete();
           subASubscription.get().dispose();
           subBSubscription.get().dispose();
+        })
+        .expectNextMatches(subs -> subs.equals(new SetAction<>(SetActionType.Remove,            
+              // Now connected, subscribe everything (B and C)
+              new HashSet<>(Arrays.asList(
+                  new TopicSubscription<String>(1, "/sub-a"), 
+                  new TopicSubscription<String>(2, "/sub-b"))),
+              Collections.emptySet())))
+        .then(() -> {
+          topicRouter.complete();
+          sourceSink.complete();
         })
         .expectComplete()
         .verify(Duration.ofSeconds(30));
@@ -93,20 +109,22 @@ public class TopicRouterTest {
 
   @Test
   public void testSubscribeWhenConnected() {
-    Flux<Integer> source = Flux.just(1, 2, 3);
+    EmitterProcessor<Integer> source = EmitterProcessor.create();
+    FluxSink<Integer> sourceSink = source.sink();
     EmitterProcessor<Integer> connectedSignal = EmitterProcessor.create();
     FluxSink<Integer> connectedSink = connectedSignal.sink();
     EmitterProcessor<Integer> disconnectedSignal = EmitterProcessor.create();
-    FluxSink<Integer> disconnectedSink = connectedSignal.sink();
+    FluxSink<Integer> disconnectedSink = disconnectedSignal.sink();
 
-    TopicRouter<Integer> topicRouter = TopicRouter.<Integer>builder()
+    TopicRouter<Integer, String> topicRouter = TopicRouter.<Integer, String>builder()
         .startConnected(false)
         .connectedSignal(connectedSignal) 
         .disconnectedSignal(disconnectedSignal)
         .subscriptionThrottleDuration(Duration.ofSeconds(1))
         .build();
 
-    Publisher<Set<TopicSubscription>> subscriptions = topicRouter.getSubscriptions();
+    Publisher<SetAction<TopicSubscription<String>>> subscriptions
+         = topicRouter.getSubscriptionActions();
     AtomicReference<Disposable> subASubscription = new AtomicReference<>();
     AtomicReference<Disposable> subBSubscription = new AtomicReference<>();
     AtomicReference<Disposable> subCSubscription = new AtomicReference<>();
@@ -122,55 +140,93 @@ public class TopicRouterTest {
           subBSubscription.set(topicRouter.route(source, "/sub-b").subscribe());
         })
         .expectNoEvent(Duration.ofMillis(100))
-        .then(() -> connectedSink.next(1))             
-        .expectNextMatches(subs -> subs.equals(
-            // Now connected, subscribe everything (A and B)
+        .then(() -> connectedSink.next(1))
+        .expectNextMatches(subs -> subs.equals(new SetAction<>(SetActionType.Add,            
             new HashSet<>(Arrays.asList(
-              new TopicSubscription(3, "/sub-a"), 
-              new TopicSubscription(4, "/sub-b")))))
+                new TopicSubscription<String>(1, "/sub-a"), 
+                new TopicSubscription<String>(2, "/sub-b"))),
+            new HashSet<>(Arrays.asList(
+              new TopicSubscription<String>(1, "/sub-a"), 
+              new TopicSubscription<String>(2, "/sub-b")))
+        )))
+        .expectNoEvent(Duration.ofMillis(100))
         .then(() -> {
           // Subscribe C
           subCSubscription.set(topicRouter.route(source, "/sub-c").subscribe());
         })
-        .expectNextMatches(subs -> subs.equals(Collections.singleton(
-            new TopicSubscription(5, "/sub-c"))))
+        .expectNextMatches(subs -> subs.equals(new SetAction<>(SetActionType.Add,            
+            Collections.singleton(
+          new TopicSubscription<String>(3, "/sub-c")),
+            new HashSet<>(Arrays.asList(
+              new TopicSubscription<String>(1, "/sub-a"), 
+              new TopicSubscription<String>(2, "/sub-b"),
+              new TopicSubscription<String>(3, "/sub-c")))
+        )))
+        .expectNoEvent(Duration.ofMillis(100))
         .then(() -> {
           // Cancel subscriber A
-          log.info("Cancelling A");
           subASubscription.get().dispose();
         })
-        .then(() -> disconnectedSink.next(1)) // Disconnect
-        .thenAwait(Duration.ofMillis(100))
-        .then(() -> connectedSink.next(1)) // Reconnect
-        .expectNextMatches(subs -> subs.equals(
-            // Now connected, subscribe everything (B and C)
+        .expectNextMatches(subs -> subs.equals(new SetAction<>(SetActionType.Remove,
+            Collections.singleton(
+            new TopicSubscription<String>(1, "/sub-a")),
             new HashSet<>(Arrays.asList(
-              new TopicSubscription(6, "/sub-b"), 
-              new TopicSubscription(7, "/sub-c")))))     
+              new TopicSubscription<String>(2, "/sub-b"), 
+              new TopicSubscription<String>(3, "/sub-c"))
+              ))))
+        .expectNoEvent(Duration.ofMillis(100))
+        .then(() -> disconnectedSink.next(1)) // Disconnect
+        .expectNextMatches(subs -> subs.equals(new SetAction<>(SetActionType.Clear,            
+              Collections.emptySet(),
+              Collections.emptySet()
+        )))
+        .thenAwait(Duration.ofMillis(100))
+        .then(() -> connectedSink.next(1)) // Reconnect  
+        .expectNextMatches(subs -> subs.equals(new SetAction<>(SetActionType.Add,            
+              // Now connected, subscribe everything (B and C)
+              new HashSet<>(Arrays.asList(
+                  new TopicSubscription<String>(4, "/sub-b"), 
+                  new TopicSubscription<String>(5, "/sub-c"))),
+              new HashSet<>(Arrays.asList(
+                new TopicSubscription<String>(4, "/sub-b"), 
+                new TopicSubscription<String>(5, "/sub-c")))
+        )))
+        .then(() -> {          
+          log.info("Completing");          
+        })
         .then(() -> {
-          topicRouter.complete();
-          connectedSink.complete();
-          disconnectedSink.complete();
           subBSubscription.get().dispose();
           subCSubscription.get().dispose();
         })
+        .expectNextMatches(subs -> subs.equals(new SetAction<>(SetActionType.Remove,        
+          new HashSet<>(Arrays.asList(
+                new TopicSubscription<String>(4, "/sub-b"), 
+                new TopicSubscription<String>(5, "/sub-c"))),
+          Collections.emptySet())))
+        .then(() -> {
+          topicRouter.complete();
+          sourceSink.complete();
+          connectedSink.complete();
+          disconnectedSink.complete();
+        })
         .expectComplete()
         .verify(Duration.ofSeconds(30));
-
   }
 
   @Test
   public void testThrottleMultipleSubscriptions() {
-    Flux<Integer> source = Flux.just(1, 2, 3);
+    EmitterProcessor<Integer> source = EmitterProcessor.create();
+    FluxSink<Integer> sourceSink = source.sink();
 
-    TopicRouter<Integer> topicRouter = TopicRouter.<Integer>builder()
+    TopicRouter<Integer, String> topicRouter = TopicRouter.<Integer, String>builder()
         .subscriptionThrottleDuration(Duration.ofSeconds(1))
         .build();
 
     AtomicReference<Disposable> subASubscription = new AtomicReference<>();
     AtomicReference<Disposable> subBSubscription = new AtomicReference<>();
 
-    Publisher<Set<TopicSubscription>> subscriptions = topicRouter.getSubscriptions();
+    Publisher<SetAction<TopicSubscription<String>>> subscriptions 
+        = topicRouter.getSubscriptionActions();
     
     StepVerifier.create(subscriptions)
         .then(() -> {        
@@ -180,16 +236,28 @@ public class TopicRouterTest {
         .then(() -> {
           // Immediately subscribe B while connected
           subBSubscription.set(topicRouter.route(source, "/sub-b").subscribe());
-        })            
-        .expectNextMatches(subs -> subs.equals(
-            // Should batch subscriptions together
+        })
+        .expectNextMatches(subs -> subs.equals(new SetAction<>(SetActionType.Add,            
             new HashSet<>(Arrays.asList(
-              new TopicSubscription(1, "/sub-a"), 
-              new TopicSubscription(2, "/sub-b")))))
+                new TopicSubscription<String>(1, "/sub-a"), 
+                new TopicSubscription<String>(2, "/sub-b"))),
+            new HashSet<>(Arrays.asList(
+              new TopicSubscription<String>(1, "/sub-a"), 
+              new TopicSubscription<String>(2, "/sub-b")))
+        )))              
         .then(() -> {
-          topicRouter.complete();
           subASubscription.get().dispose();
           subBSubscription.get().dispose();
+        })
+        .expectNextMatches(subs -> subs.equals(new SetAction<>(SetActionType.Remove,            
+              // Now connected, subscribe everything (B and C)
+              new HashSet<>(Arrays.asList(
+                  new TopicSubscription<String>(1, "/sub-a"), 
+                  new TopicSubscription<String>(2, "/sub-b"))),
+              Collections.emptySet())))                      
+        .then(() -> {
+          topicRouter.complete();
+          sourceSink.complete();
         })
         .expectComplete()
         .verify(Duration.ofSeconds(30));

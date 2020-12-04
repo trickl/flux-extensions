@@ -22,7 +22,8 @@ public class SubscriptionIdPublisher<T> implements Publisher<T> {
   public SubscriptionIdPublisher(
       Publisher<T> source,
       Consumer<Integer> doOnSubscribe,
-      Consumer<Integer> doOnCancel) {
+      Consumer<Integer> doOnCancel,
+      Consumer<Integer> doOnTerminate) {
     contextPublisher = SubscriptionContextPublisher.<T, Integer>builder()
       .source(source)
       .doOnSubscribe(() -> {
@@ -35,6 +36,11 @@ public class SubscriptionIdPublisher<T> implements Publisher<T> {
       .doOnCancel(id -> {
         if (doOnCancel != null) {
           doOnCancel.accept(id);
+        }
+      })
+      .doOnTerminate(id -> {
+        if (doOnTerminate != null) {
+          doOnTerminate.accept(id);
         }
       })
       .build();

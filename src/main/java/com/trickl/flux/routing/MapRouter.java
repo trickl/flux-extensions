@@ -8,10 +8,10 @@ import lombok.Builder;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 
-public class MapRouter<T> {
-  private final BiFunction<Publisher<T>, String, Flux<T>> fluxCreator;
+public class MapRouter<T, DestinationT> {
+  private final BiFunction<Publisher<T>, DestinationT, Flux<T>> fluxCreator;
 
-  private final Map<String, Flux<T>> fluxMap = new HashMap<String, Flux<T>>();
+  private final Map<DestinationT, Flux<T>> fluxMap = new HashMap<DestinationT, Flux<T>>();
 
   /**
    * Build a new topic flux router.
@@ -22,7 +22,7 @@ public class MapRouter<T> {
   @Builder
   public MapRouter(
       Publisher<T> source,
-      BiFunction<Publisher<T>, String, Flux<T>> fluxCreator
+      BiFunction<Publisher<T>, DestinationT, Flux<T>> fluxCreator
   ) {
     this.fluxCreator = Optional.ofNullable(fluxCreator)
         .orElse((pub, name) -> Flux.from(pub));
@@ -35,7 +35,10 @@ public class MapRouter<T> {
    * @param destination The name.
    * @return A flux for this name
   */
-  public Flux<T> route(Publisher<T> source, String destination) {
-    return fluxMap.computeIfAbsent(destination, name -> fluxCreator.apply(source, name).share());
+  public Flux<T> route(Publisher<T> source, DestinationT destination) {
+    return fluxMap.computeIfAbsent(destination, name -> fluxCreator.apply(source, name)
+        .doOnCancel(() -> fluxMap.remove(destination))
+        .doOnTerminate(() -> fluxMap.remove(destination))
+        .share());
   }
 }

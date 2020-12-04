@@ -80,8 +80,8 @@ public class SockJsFluxClientTest {
         .thenVerify(); 
 
     WebSocketClient client = new ReactorNettyWebSocketClient();
-    SockJsFluxClient sockJsClient =
-        SockJsFluxClient.builder()
+    SockJsFluxClient<String> sockJsClient =
+        SockJsFluxClient.<String>builder()
         .webSocketClient(client)
         .transportUriProvider(mockServer::getWebSocketUri)
         .connectionTimeout(Duration.ofSeconds(1))
@@ -142,8 +142,8 @@ public class SockJsFluxClientTest {
         .thenVerify(); 
 
     WebSocketClient client = new ReactorNettyWebSocketClient();
-    SockJsFluxClient sockJsClient =
-        SockJsFluxClient.builder()
+    SockJsFluxClient<String> sockJsClient =
+        SockJsFluxClient.<String>builder()
         .webSocketClient(client)
         .transportUriProvider(mockServer::getWebSocketUri)
         .objectMapper(objectMapper)

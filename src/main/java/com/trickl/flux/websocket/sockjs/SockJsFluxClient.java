@@ -3,6 +3,7 @@ package com.trickl.flux.websocket.sockjs;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trickl.exceptions.AbnormalTerminationException;
 import com.trickl.flux.mappers.ThrowableMapper;
+import com.trickl.flux.routing.TopicSubscription;
 import com.trickl.flux.websocket.RobustWebSocketFluxClient;
 import com.trickl.flux.websocket.TextWebSocketHandler;
 import com.trickl.flux.websocket.sockjs.frames.SockJsCloseFrame;
@@ -13,7 +14,11 @@ import java.io.IOException;
 import java.net.URI;
 import java.text.MessageFormat;
 import java.time.Duration;
+import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.function.BiPredicate;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import lombok.Builder;
 import lombok.extern.java.Log;
@@ -25,8 +30,8 @@ import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
 
 @Log
-public class SockJsFluxClient {
-  private final RobustWebSocketFluxClient<String, SockJsFrame> robustWebSocketFluxClient;
+public class SockJsFluxClient<TopicT> {
+  private final RobustWebSocketFluxClient<String, SockJsFrame, TopicT> robustWebSocketFluxClient;
 
   private Duration connectionTimeout = Duration.ofSeconds(3);
 
@@ -41,7 +46,10 @@ public class SockJsFluxClient {
       WebSocketClient webSocketClient,
       Supplier<URI> transportUriProvider,
       ObjectMapper objectMapper,
-      Supplier<HttpHeaders> webSocketHeadersProvider,
+      Mono<HttpHeaders> webSocketHeadersProvider,
+      BiPredicate<SockJsFrame, TopicT> isDataFrameForDestination,
+      Function<Set<TopicSubscription<TopicT>>, List<SockJsFrame>> buildSubscribeFrames,
+      Function<Set<TopicSubscription<TopicT>>, List<SockJsFrame>> buildUnsubscribeFrames,
       Duration heartbeatSendFrequency,
       Duration heartbeatReceiveFrequency,
       Duration connectionTimeout,
@@ -51,14 +59,13 @@ public class SockJsFluxClient {
       Mono<Void> doBeforeSessionOpen,
       Mono<Void> doAfterSessionClose,
       int maxRetries) {
-    RobustWebSocketFluxClient.RobustWebSocketFluxClientBuilder<String, SockJsFrame>
+    RobustWebSocketFluxClient.RobustWebSocketFluxClientBuilder<String, SockJsFrame, TopicT>
         robustWebSocketFluxClientBuilder =
-        RobustWebSocketFluxClient.<String, SockJsFrame>builder()
+        RobustWebSocketFluxClient.<String, SockJsFrame, TopicT>builder()
             .webSocketClient(webSocketClient)
             .transportUriProvider(transportUriProvider)
             .handlerFactory(TextWebSocketHandler::new)
             .isConnectedFrame(this::isConnectedFrame)
-            .isDataFrameForDestination(this::isDataFrameForDestination)
             .getHeartbeatSendFrequencyCallback(this::getHeartbeatSendFrequency)
             .getHeartbeatReceiveFrequencyCallback(this::getHeartbeatReceiveFrequency)
             .doConnect(this::doConnect)
@@ -67,6 +74,18 @@ public class SockJsFluxClient {
             .decodeErrorFrame(this::decodeErrorFrame)
             .encoder(new SockJsFrameEncoder(objectMapper))
             .decoder(new SockJsFrameDecoder(objectMapper));
+
+    if (isDataFrameForDestination != null) {
+      robustWebSocketFluxClientBuilder.isDataFrameForDestination(isDataFrameForDestination);
+    }
+
+    if (buildSubscribeFrames != null) {
+      robustWebSocketFluxClientBuilder.buildSubscribeFrames(buildSubscribeFrames);
+    }
+
+    if (buildUnsubscribeFrames != null) {
+      robustWebSocketFluxClientBuilder.buildUnsubscribeFrames(buildUnsubscribeFrames);
+    }
 
     if (webSocketHeadersProvider != null) {
       robustWebSocketFluxClientBuilder.webSocketHeadersProvider(webSocketHeadersProvider);
@@ -107,7 +126,7 @@ public class SockJsFluxClient {
     return false;
   }
 
-  protected boolean isDataFrameForDestination(SockJsFrame frame, String destination) {
+  protected boolean isDataFrameForDestination(SockJsFrame frame, TopicT destination) {
     if (!(frame instanceof SockJsMessageFrame)) {
       return false;
     }
@@ -165,7 +184,7 @@ public class SockJsFluxClient {
    * @return A flux of messages on that channel
    */
   public <T> Flux<T> get(
-      String destination, Class<T> messageType, Duration minMessageFrequency) {
+        TopicT destination, Class<T> messageType, Duration minMessageFrequency) {
     return robustWebSocketFluxClient.get(destination, minMessageFrequency)    
         .flatMap(new ThrowableMapper<>(frame -> decodeDataFrame(frame, messageType)));
   }

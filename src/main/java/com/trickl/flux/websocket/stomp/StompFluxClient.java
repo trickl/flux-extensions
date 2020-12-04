@@ -32,7 +32,7 @@ import reactor.core.publisher.Mono;
 
 @Log
 public class StompFluxClient {
-  private final RobustWebSocketFluxClient<byte[], StompFrame> robustWebSocketFluxClient;
+  private final RobustWebSocketFluxClient<byte[], StompFrame, String> robustWebSocketFluxClient;
 
   private Duration connectionTimeout = Duration.ofSeconds(3);
 
@@ -49,7 +49,7 @@ public class StompFluxClient {
       WebSocketClient webSocketClient,
       Supplier<URI> transportUriProvider,
       ObjectMapper objectMapper,
-      Supplier<HttpHeaders> webSocketHeadersProvider,
+      Mono<HttpHeaders> webSocketHeadersProvider,
       Duration heartbeatSendFrequency,
       Duration heartbeatReceiveFrequency,
       Duration connectionTimeout,
@@ -59,9 +59,9 @@ public class StompFluxClient {
       Mono<Void> doBeforeSessionOpen,
       Mono<Void> doAfterSessionClose,
       int maxRetries) {
-    RobustWebSocketFluxClient.RobustWebSocketFluxClientBuilder<byte[], StompFrame>
+    RobustWebSocketFluxClient.RobustWebSocketFluxClientBuilder<byte[], StompFrame, String>
         robustWebSocketFluxClientBuilder =
-        RobustWebSocketFluxClient.<byte[], StompFrame>builder()
+        RobustWebSocketFluxClient.<byte[], StompFrame, String>builder()
             .webSocketClient(webSocketClient)
             .transportUriProvider(transportUriProvider)
             .handlerFactory(BinaryWebSocketHandler::new)
@@ -155,7 +155,7 @@ public class StompFluxClient {
     return Optional.of(StompDisconnectFrame.builder().build());
   }
 
-  protected List<StompFrame> buildSubscribeFrames(Set<TopicSubscription> topics) {
+  protected List<StompFrame> buildSubscribeFrames(Set<TopicSubscription<String>> topics) {
     log.info("Building subscribe frames");
     return topics.stream().map(topic -> StompSubscribeFrame.builder()
     .destination(topic.getTopic())
@@ -163,7 +163,7 @@ public class StompFluxClient {
     .build()).collect(Collectors.toList());
   }
 
-  protected List<StompFrame> buildUnsubscribeFrames(Set<TopicSubscription> topics) {
+  protected List<StompFrame> buildUnsubscribeFrames(Set<TopicSubscription<String>> topics) {
     return topics.stream().map(topic -> StompUnsubscribeFrame.builder()
     .subscriptionId(String.valueOf(topic.getId()))
     .build()).collect(Collectors.toList());
