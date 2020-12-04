@@ -182,6 +182,7 @@ public class StompFluxClientTest {
           secondSubscription.get().dispose();
         })
         .thenExpectMessage(STOMP_UNSUBSCRIBE_PATTERN)
+        .thenExpectMessage(STOMP_UNSUBSCRIBE_PATTERN)
         .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
         .thenSend(STOMP_RECEIPT_MESSAGE)
         .thenExpectClose(Duration.ofSeconds(3))
