@@ -191,8 +191,15 @@ public class SockJsFluxClient<TopicT> {
         TopicT destination, 
         Class<T> messageType, 
         Duration minMessageFrequency, 
-        Publisher<SockJsFrame> send) {
-    return robustWebSocketFluxClient.get(destination, minMessageFrequency, send)    
+        Publisher<T> send) {
+    Publisher<SockJsFrame> sendFrames = Flux.from(send).flatMap(
+        new ThrowableMapper<>(
+            message -> {
+              return SockJsMessageFrame.builder()
+              .message(objectMapper.writeValueAsString(message))
+              .build();
+            }));
+    return robustWebSocketFluxClient.get(destination, minMessageFrequency, sendFrames)      
         .flatMap(new ThrowableMapper<>(frame -> decodeDataFrame(frame, messageType)));
   }
 }
