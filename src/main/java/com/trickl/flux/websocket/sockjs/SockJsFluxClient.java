@@ -19,10 +19,10 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.function.BiPredicate;
-import java.util.function.Function;
 import java.util.function.Supplier;
 import lombok.Builder;
 import lombok.extern.java.Log;
+import org.reactivestreams.Publisher;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.reactive.socket.CloseStatus;
 import org.springframework.web.reactive.socket.client.WebSocketClient;
@@ -184,11 +184,15 @@ public class SockJsFluxClient<TopicT> {
    * @param destination The destination channel
    * @param messageType The class of messages on the flux.
    * @param minMessageFrequency Unsubscribe if no message received in this time
+   * @param send Messages to send upstream
    * @return A flux of messages on that channel
    */
   public <T> Flux<T> get(
-        TopicT destination, Class<T> messageType, Duration minMessageFrequency) {
-    return robustWebSocketFluxClient.get(destination, minMessageFrequency)    
+        TopicT destination, 
+        Class<T> messageType, 
+        Duration minMessageFrequency, 
+        Publisher<SockJsFrame> send) {
+    return robustWebSocketFluxClient.get(destination, minMessageFrequency, send)    
         .flatMap(new ThrowableMapper<>(frame -> decodeDataFrame(frame, messageType)));
   }
 }

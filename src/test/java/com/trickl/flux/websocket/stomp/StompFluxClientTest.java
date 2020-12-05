@@ -95,7 +95,7 @@ public class StompFluxClientTest {
         .thenVerify();
 
     Flux<String> output = stompClient.get(
-        "/messages", String.class, Duration.ofMinutes(30));
+        "/messages", String.class, Duration.ofMinutes(30), Flux.empty());
 
     StepVerifier.create(output)
         .thenAwait(Duration.ofSeconds(5))      
@@ -135,7 +135,7 @@ public class StompFluxClientTest {
         .thenVerify();
 
     Flux<String> output = stompClient.get(
-        "/messages", String.class, Duration.ofMinutes(30));
+        "/messages", String.class, Duration.ofMinutes(30), Flux.empty());
 
     StepVerifier.create(output)
         .thenAwait(Duration.ofSeconds(5))      
@@ -173,7 +173,7 @@ public class StompFluxClientTest {
         .thenWait(Duration.ofSeconds(3))
         .then(() -> {
           Flux<String> output2 = stompClient.get(
-              "/messages2", String.class, Duration.ofMinutes(30));
+              "/messages2", String.class, Duration.ofMinutes(30), Flux.empty());
           secondSubscription.set(output2.subscribe());
         })
         .thenExpectMessage(STOMP_SUBSCRIBE_PATTERN)
@@ -190,7 +190,7 @@ public class StompFluxClientTest {
         .thenVerify();
 
     Flux<String> output = stompClient.get(
-        "/messages", String.class, Duration.ofSeconds(60));
+        "/messages", String.class, Duration.ofSeconds(60), Flux.empty());
 
     StepVerifier.create(output)
         .thenAwait(Duration.ofSeconds(10))      
@@ -238,7 +238,7 @@ public class StompFluxClientTest {
         .build();
 
     Flux<String> output = stompClient.get(
-        "/messages", String.class, Duration.ofMinutes(30));
+        "/messages", String.class, Duration.ofMinutes(30), Flux.empty());
 
     StepVerifier.create(output)
         .expectErrorMessage("Max retries exceeded")
@@ -306,7 +306,7 @@ public class StompFluxClientTest {
         .build();
 
     Flux<String> output = stompClient.get(
-        "/messages", String.class, Duration.ofMinutes(30));
+        "/messages", String.class, Duration.ofMinutes(30), Flux.empty());
 
     StepVerifier.create(output)     
         .expectErrorMessage("Max retries exceeded")
@@ -349,7 +349,7 @@ public class StompFluxClientTest {
         .build();
 
     Flux<String> output = stompClient.get(
-        "/messages", String.class, Duration.ofSeconds(60))
+        "/messages", String.class, Duration.ofSeconds(60), Flux.empty())
         .doOnNext((String message) -> {
           log.log(Level.INFO, "\u001B[32mMESSAGE  ↑ {0}\u001B[0m", new Object[] {message});
         });

@@ -95,7 +95,7 @@ public class SockJsFluxClientTest {
         .build();
 
     Flux<String> output = sockJsClient.get(
-        "/messages", String.class, Duration.ofMinutes(30));
+        "/messages", String.class, Duration.ofMinutes(30), Flux.empty());
 
     StepVerifier.create(output)
         .consumeSubscriptionWith(sub -> subscription = sub)
@@ -159,7 +159,7 @@ public class SockJsFluxClientTest {
         .build();
 
     Flux<String> output = sockJsClient.get(
-        "/messages", String.class, Duration.ofMinutes(30));
+        "/messages", String.class, Duration.ofMinutes(30), Flux.empty());
 
     StepVerifier.create(output)
         .consumeSubscriptionWith(sub -> subscription = sub)        

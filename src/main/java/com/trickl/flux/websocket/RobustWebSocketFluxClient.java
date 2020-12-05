@@ -159,6 +159,8 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
         .log("disconnectedSignal")
         .doOnNext(value -> log.info(ANSI_RED + "disconnected" + ANSI_RESET)).share();
 
+    ConcatProcessor<T> streamRequestProcessor = ConcatProcessor.create();
+
     TopicRouter<T, TopicT> topicRouter = TopicRouter.<T, TopicT>builder()
         .startConnected(false)
         .connectedSignal(connectedContexts) 
@@ -172,6 +174,7 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
       connectedContexts,
       disconnectedSignalSink,   
       disconnectedSignal,
+      streamRequestProcessor,
       topicRouter);
   }
 
@@ -188,9 +191,6 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
 
     ConcatProcessor<Duration> disconnectReceiptProcessor =
         ConcatProcessor.create();
-
-    ConcatProcessor<T> streamRequestProcessor =
-        ConcatProcessor.create();
         
     Publisher<SetAction<TopicSubscription<TopicT>>> subscriptionsActionsFlux = 
         Flux.from(topicContext.getTopicRouter().getSubscriptionActions())
@@ -199,14 +199,14 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
               List<T> subscriptionFrames = buildSubscribeFrames.apply(action.getDelta(),
                   action.getSet());
               subscriptionFrames.stream().forEach(subscriptionFrame -> {
-                streamRequestProcessor.sink()
+                topicContext.getStreamRequestProcessor().sink()
                     .next(subscriptionFrame);
               });
             } else if (action.getType().equals(SetActionType.Remove)) {
               List<T> unsubscribeFrames = buildUnsubscribeFrames.apply(action.getDelta(),
                   action.getSet());
               unsubscribeFrames.stream().forEach(unsubscribeFrame -> {
-                streamRequestProcessor.sink()
+                topicContext.getStreamRequestProcessor().sink()
                     .next(unsubscribeFrame);
               });   
             }
@@ -219,7 +219,6 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
         forceReconnectSignalEmitter,
         connectionExpectationProcessor,
         disconnectReceiptProcessor,
-        streamRequestProcessor,
         subscriptionsActionsFlux);
   }
 
@@ -261,7 +260,8 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
         .log("heartbeatSwitchableProcessor")
         .<T>switchMap(
             frequency ->
-                sendHeartbeats(frequency, responseContext.getStreamRequestProcessor().sink()))
+                sendHeartbeats(frequency,
+                responseContext.getTopicContext().getStreamRequestProcessor().sink()))
         .log("heartbeats");
 
     Flux<T> heartbeatExpectations = Flux.from(heartbeatExpectation)
@@ -303,7 +303,9 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
             .doOnError(
                 error -> {
                   sendErrorFrame(
-                      error, context.getResponseContext().getStreamRequestProcessor().sink());
+                      error,
+                      context.getResponseContext()
+                      .getTopicContext().getStreamRequestProcessor().sink());
                 });
     })
         .retryWhen(ExponentialBackoffRetry.builder()
@@ -337,7 +339,7 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
       ResponseContext<T, TopicT> context) {
     log.info("Creating base stream context mono");
     Publisher<T> sendWithResponse =
-        Flux.merge(Flux.from(context.getStreamRequestProcessor()))
+        Flux.merge(Flux.from(context.getTopicContext().getStreamRequestProcessor()))
             .log("sendWithResponse", Level.FINE);
 
 
@@ -420,7 +422,7 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
                     beforeCloseAction.set(response ->
                         disconnect(
                           inputTransformer.apply(response), 
-                          context.getStreamRequestProcessor().sink(), 
+                          context.getTopicContext().getStreamRequestProcessor().sink(), 
                           context.getDisconnectReceiptExpectationProcessor(),
                           context.getDisconnectReceiptExpectationProcessor().sink()));
 
@@ -556,16 +558,23 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
    *
    * @param destination The destination channel
    * @param minMessageFrequency Unsubscribe if no message received in this time
+   * @param send Messages to send upstream
    * @return A flux of messages on that channel
    */
   public Flux<T> get(
-      TopicT destination, Duration minMessageFrequency) {
+      TopicT destination, Duration minMessageFrequency, Publisher<T> send) {
     return sharedStreamContext.getResource().flatMapMany(
-      context -> context
-          .getTopicContext()
+      context -> {
+        TopicContext<T, TopicT> topicContext = context.getTopicContext();
+        Publisher<T> sendProcessor = Flux.from(send).doOnNext(message -> {
+          topicContext.getStreamRequestProcessor().sink().next(message);
+        }).ignoreElements();
+
+        return Flux.merge(topicContext
           .getTopicRouter()
           .route(
-          context.getSharedStream(), destination)
+          context.getSharedStream(), destination), sendProcessor);
+      }
     )
     .timeout(minMessageFrequency)
     .onErrorMap(
@@ -587,6 +596,8 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
 
     protected final Publisher<Long> disconnectedSignal;
 
+    protected final ConcatProcessor<T> streamRequestProcessor;    
+    
     protected final TopicRouter<T, TopicT> topicRouter;
   }
 
@@ -603,8 +614,6 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
     protected final ConcatProcessor<Duration> connectionExpectationProcessor;
 
     protected final ConcatProcessor<Duration> disconnectReceiptExpectationProcessor;
-
-    protected final ConcatProcessor<T> streamRequestProcessor;    
 
     protected final Publisher<SetAction<TopicSubscription<TopicT>>>  subscriptionActionsFlux;
   }

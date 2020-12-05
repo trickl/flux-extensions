@@ -24,6 +24,7 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import lombok.Builder;
 import lombok.extern.java.Log;
+import org.reactivestreams.Publisher;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.reactive.socket.client.WebSocketClient;
 import reactor.core.publisher.Flux;
@@ -203,11 +204,15 @@ public class StompFluxClient {
    * @param destination The destination channel
    * @param messageType The class of messages on the flux.
    * @param minMessageFrequency Unsubscribe if no message received in this time
+   * @param send Messages to send upstream
    * @return A flux of messages on that channel
    */
   public <T> Flux<T> get(
-      String destination, Class<T> messageType, Duration minMessageFrequency) {
-    return robustWebSocketFluxClient.get(destination, minMessageFrequency)    
+      String destination,
+      Class<T> messageType, 
+      Duration minMessageFrequency,
+      Publisher<StompFrame> send) {
+    return robustWebSocketFluxClient.get(destination, minMessageFrequency, send)    
         .flatMap(new ThrowableMapper<>(frame -> decodeDataFrame(frame, messageType)));
   }
 }
