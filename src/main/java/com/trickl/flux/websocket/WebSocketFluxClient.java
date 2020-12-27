@@ -51,7 +51,7 @@ public class WebSocketFluxClient<T> {
   public Flux<T> get(Publisher<T> send) {
     return Flux.<T, SessionContext<T>>usingWhen(
         openSession(send).log("websocketsession", Level.FINER),
-        context -> Flux.from(context.getReceivePublisher()).log("receivePublisher", Level.INFO),
+        context -> Flux.from(context.getReceivePublisher()).log("receivePublisher", Level.FINE),
         context -> {
           log.info("Disposing of connection");
           return doBeforeClose.apply(context.getReceivePublisher())
@@ -60,7 +60,7 @@ public class WebSocketFluxClient<T> {
               })
               .log("do before close", Level.FINER)
               .then(closeSession(context)).log("cleanup-session");
-        }).log("websocketfluxclient", Level.INFO);
+        }).log("websocketfluxclient", Level.FINER);
   }
 
   protected Mono<SessionContext<T>> openSession(Publisher<T> send) {  
@@ -68,7 +68,8 @@ public class WebSocketFluxClient<T> {
     FluxSink<WebSocketSession> sessionSink = sessionProcessor.sink();
     EmitterProcessor<T> receiveProcessor = EmitterProcessor.create();
     FluxSink<T> receiveSink = receiveProcessor.sink();
-    Publisher<T> sharedReceivedPublisher = receiveProcessor.log("sharedReceiveProcessor").share();
+    Publisher<T> sharedReceivedPublisher = receiveProcessor
+        .log("sharedReceiveProcessor", Level.FINE).share();
     EmitterProcessor<T> openProcessor = EmitterProcessor.create();
     FluxSink<T> openSink = openProcessor.sink();
     Disposable internalReceiveSubscription = Flux.from(sharedReceivedPublisher).subscribe();
@@ -77,7 +78,8 @@ public class WebSocketFluxClient<T> {
         .<Void>flatMap(
             headers -> {
               WebSocketHandler dataHandler = handlerFactory.apply(
-                  receiveSink, Flux.merge(send, openProcessor));
+                  receiveSink, Flux.merge(send, openProcessor
+                  .log("openProcessor", Level.FINE)));
               SessionHandler sessionHandler =
                   new SessionHandler(
                       dataHandler, sessionSink);
@@ -85,7 +87,7 @@ public class WebSocketFluxClient<T> {
               log.info("Connecting to " + transportUri);
               return webSocketClient
                   .execute(transportUri, headers, sessionHandler)
-                  .log("WebSocketClient", Level.FINER);
+                  .log("WebSocketClient", Level.FINE);
             })
         .doOnError(receiveSink::error)
         .doFinally(signal -> {

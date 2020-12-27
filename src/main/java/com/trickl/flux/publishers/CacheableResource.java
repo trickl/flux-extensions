@@ -23,7 +23,7 @@ public class CacheableResource<T> {
       = DirectProcessor.create();
 
   private final Flux<T> lastResourcePublisher 
-      = lastResourceProcessor.cache(1);
+      = lastResourceProcessor.cache(1).log("lastResource");
   
   public void supplyOnNextRequest() {
     shouldGenerateOnNextRequest.set(true);
@@ -42,10 +42,12 @@ public class CacheableResource<T> {
         lastResource -> Mono.empty());
     } 
 
-    return Mono.zip(lastResourcePublisher.next(), nextResource.doOnNext(resource -> {      
-      log.info("Got resource - " + resource);
-      lastResourceProcessor.sink().next(resource);
-    }), (cachedResource, generatedResource) -> cachedResource);
+    return Mono.zip(lastResourcePublisher.next().log("cachedResource"), 
+      nextResource.doOnNext(resource -> {      
+        log.info("Got resource - " + resource);
+        lastResourceProcessor.sink().next(resource);
+      }).log("generatedResource"),
+      (cachedResource, generatedResource) -> cachedResource).log("zipResource");
   }
 
   protected Mono<T> getNextResource(T lastResource) {

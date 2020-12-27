@@ -1,6 +1,5 @@
 package com.trickl.flux.websocket.stomp;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trickl.flux.mappers.ThrowableMapper;
 import com.trickl.flux.routing.TopicSubscription;
@@ -22,7 +21,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
-import java.util.logging.Level;
 import java.util.stream.Collectors;
 import lombok.Builder;
 import lombok.extern.java.Log;

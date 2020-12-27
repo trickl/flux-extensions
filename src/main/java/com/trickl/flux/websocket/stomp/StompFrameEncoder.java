@@ -5,12 +5,15 @@ import java.io.IOException;
 import java.util.logging.Level;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.java.Log;
+import org.reactivestreams.Publisher;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.simp.stomp.StompEncoder;
+import reactor.core.publisher.Mono;
 
 @Log
 @RequiredArgsConstructor
-public class StompFrameEncoder implements ThrowingFunction<StompFrame, byte[], IOException>  {
+public class StompFrameEncoder
+    implements ThrowingFunction<StompFrame, Publisher<byte[]>, IOException>  {
 
   private final StompEncoder encoder = new StompEncoder();
 
@@ -21,9 +24,9 @@ public class StompFrameEncoder implements ThrowingFunction<StompFrame, byte[], I
    * @return An array of bytes
    * @throws IOException If the encoding failed
    */
-  public byte[] apply(StompFrame stompMessage) throws IOException {
+  public Publisher<byte[]> apply(StompFrame stompMessage) throws IOException {
     log.log(Level.FINE, "\u001B[34mSENDING {0}\u001B[0m", new Object[] {stompMessage});
     Message<byte[]> message = stompMessage.toMessage();
-    return encoder.encode(message);
+    return Mono.just(encoder.encode(message));
   }
 }

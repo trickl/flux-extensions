@@ -2,6 +2,7 @@ package com.trickl.flux.websocket.sockjs;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trickl.exceptions.AbnormalTerminationException;
+import com.trickl.flux.mappers.FluxSinkAdapter;
 import com.trickl.flux.mappers.ThrowableMapper;
 import com.trickl.flux.routing.TopicSubscription;
 import com.trickl.flux.websocket.RobustWebSocketFluxClient;
@@ -17,8 +18,9 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
-import java.util.function.BiPredicate;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import lombok.Builder;
 import lombok.extern.java.Log;
@@ -31,7 +33,7 @@ import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
 
 @Log
-public class SockJsFluxClient<TopicT> {
+public class SockJsFluxClient<TopicT, T, S> {
   private final RobustWebSocketFluxClient<String, SockJsFrame, TopicT> robustWebSocketFluxClient;
 
   private Duration connectionTimeout = Duration.ofSeconds(3);
@@ -42,13 +44,17 @@ public class SockJsFluxClient<TopicT> {
 
   private ObjectMapper objectMapper = new ObjectMapper();
 
+  private final BiFunction<String, Class<T>, Publisher<T>> payloadDecoder;
+  private final Function<S, Publisher<String>> payloadEncoder;
+  private final BiConsumer<T, FluxSink<S>> handleProtocolFrames;
+  private final Class<T> responseClazz;
+
   @Builder
   SockJsFluxClient(
       WebSocketClient webSocketClient,
       Supplier<URI> transportUriProvider,
       ObjectMapper objectMapper,
       Mono<HttpHeaders> webSocketHeadersProvider,
-      BiPredicate<SockJsFrame, TopicT> isDataFrameForDestination,
       BiFunction<Set<TopicSubscription<TopicT>>, Set<TopicSubscription<TopicT>>, List<SockJsFrame>> 
           buildSubscribeFrames,
       BiFunction<Set<TopicSubscription<TopicT>>, Set<TopicSubscription<TopicT>>, List<SockJsFrame>> 
@@ -59,6 +65,10 @@ public class SockJsFluxClient<TopicT> {
       Duration disconnectionReceiptTimeout,
       Duration initialRetryDelay,
       Duration retryConsiderationPeriod,
+      BiConsumer<T, FluxSink<S>> handleProtocolFrames,
+      Class<T> responseClazz,
+      BiFunction<String, Class<T>, Publisher<T>> payloadDecoder,
+      Function<S, Publisher<String>> payloadEncoder,
       Mono<Void> doBeforeSessionOpen,
       Mono<Void> doAfterSessionClose,
       int maxRetries) {
@@ -75,12 +85,9 @@ public class SockJsFluxClient<TopicT> {
             .buildDisconnectFrame(this::buildDisconnectFrame)
             .buildHeartbeatFrame(this::buildHeartbeatFrame)
             .decodeErrorFrame(this::decodeErrorFrame)
+            .handleProtocolFrames(this::processProtocolFrames)
             .encoder(new SockJsFrameEncoder(objectMapper))
             .decoder(new SockJsFrameDecoder(objectMapper));
-
-    if (isDataFrameForDestination != null) {
-      robustWebSocketFluxClientBuilder.isDataFrameForDestination(isDataFrameForDestination);
-    }
 
     if (buildSubscribeFrames != null) {
       robustWebSocketFluxClientBuilder.buildSubscribeFrames(buildSubscribeFrames);
@@ -119,6 +126,45 @@ public class SockJsFluxClient<TopicT> {
         Optional.ofNullable(heartbeatSendFrequency).orElse(this.heartbeatSendFrequency);
     this.heartbeatReceiveFrequency =
         Optional.ofNullable(heartbeatReceiveFrequency).orElse(this.heartbeatReceiveFrequency);
+    this.payloadDecoder = Optional.ofNullable(payloadDecoder)
+        .orElse((payload, clazz) -> decodeDataFrame(payload, clazz));
+
+    this.payloadEncoder = Optional.ofNullable(payloadEncoder)
+      .orElse((data) -> encodeDataFrame(data));
+
+    this.handleProtocolFrames = Optional.ofNullable(handleProtocolFrames)
+      .orElse((data, responseSink) -> {});
+
+    this.responseClazz = responseClazz;
+  }
+
+  protected Publisher<SockJsFrame> 
+      processProtocolFrames(SockJsFrame frame, FluxSink<SockJsFrame> responseSink) {
+
+    return Mono.just(frame)
+      .flatMapMany(f -> {
+        if (f.getClass().equals(SockJsMessageFrame.class)) {
+          SockJsMessageFrame messageFrame = (SockJsMessageFrame) f;
+          FluxSinkAdapter<S, SockJsFrame, IOException> sendSink
+              = new FluxSinkAdapter<>(responseSink, (sendData) -> {
+                return Flux.from(encodeDataFrame(sendData))
+                  .map(message -> 
+                   SockJsMessageFrame.builder()
+                    .message(message)
+                    .build()
+                  );
+              });
+
+          Mono<SockJsFrame> protocolActions = Flux.from(
+              Flux.from(payloadDecoder.apply(messageFrame.getMessage(), responseClazz))
+              .doOnNext(data -> handleProtocolFrames.accept(data, sendSink))
+          ).ignoreElements().cast(SockJsFrame.class);
+    
+          return Flux.just(f).mergeWith(protocolActions);
+        }
+
+        return Mono.just(f);
+      });
   }
 
   protected boolean isConnectedFrame(SockJsFrame frame) {
@@ -129,14 +175,6 @@ public class SockJsFluxClient<TopicT> {
     return false;
   }
 
-  protected boolean isDataFrameForDestination(SockJsFrame frame, TopicT destination) {
-    if (!(frame instanceof SockJsMessageFrame)) {
-      return false;
-    }
-
-    return true;
-  }
-
   protected Duration getHeartbeatSendFrequency(SockJsFrame connectedFrame) {
     return heartbeatSendFrequency;
   }
@@ -145,9 +183,16 @@ public class SockJsFluxClient<TopicT> {
     return heartbeatReceiveFrequency;
   }
 
-  protected <T> T decodeDataFrame(SockJsFrame frame, Class<T> messageType)
-      throws IOException {
-    return objectMapper.readValue(((SockJsMessageFrame) frame).getMessage(), messageType);
+  protected Publisher<T> decodeDataFrame(String payload, Class<T> messageType) {
+    return Flux.just(payload)
+            .flatMap(new ThrowableMapper<>(
+                p -> objectMapper.readValue(p, messageType)));
+  }
+
+  protected Publisher<String> encodeDataFrame(S data) {
+    return Flux.just(data)
+            .flatMap(new ThrowableMapper<>(
+                p -> objectMapper.writeValueAsString(p)));
   }
 
   protected Optional<Throwable> decodeErrorFrame(SockJsFrame frame) {
@@ -180,26 +225,28 @@ public class SockJsFluxClient<TopicT> {
   /**
    * Get a flux for a destination.
    *
-   * @param <T> The type of messages on the flux.
    * @param destination The destination channel
    * @param messageType The class of messages on the flux.
    * @param minMessageFrequency Unsubscribe if no message received in this time
    * @param send Messages to send upstream
    * @return A flux of messages on that channel
    */
-  public <T> Flux<T> get(
+  public Flux<T> get(
         TopicT destination, 
         Class<T> messageType, 
         Duration minMessageFrequency, 
-        Publisher<T> send) {
-    Publisher<SockJsFrame> sendFrames = Flux.from(send).flatMap(
-        new ThrowableMapper<>(
-            message -> {
-              return SockJsMessageFrame.builder()
-              .message(objectMapper.writeValueAsString(message))
-              .build();
-            }));
-    return robustWebSocketFluxClient.get(destination, minMessageFrequency, sendFrames)      
-        .flatMap(new ThrowableMapper<>(frame -> decodeDataFrame(frame, messageType)));
+        Publisher<S> send) {
+    Publisher<SockJsFrame> sendFrames = Flux.from(send)
+        .flatMap(payloadEncoder)
+        .map(message -> {
+          return SockJsMessageFrame.builder()
+          .message(message)
+          .build();
+        });
+    return robustWebSocketFluxClient.get(destination, minMessageFrequency, sendFrames)
+        .filter(frame -> frame.getClass().equals(SockJsMessageFrame.class))
+        .cast(SockJsMessageFrame.class)
+        .map(messageFrame -> messageFrame.getMessage())
+        .flatMap(message -> payloadDecoder.apply(message, messageType));
   }
 }

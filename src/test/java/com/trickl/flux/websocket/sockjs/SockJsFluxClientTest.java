@@ -3,8 +3,10 @@ package com.trickl.flux.websocket.sockjs;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trickl.flux.config.WebSocketConfiguration;
 import com.trickl.flux.websocket.MockServerWithWebSocket;
+import com.trickl.flux.websocket.sockjs.frames.SockJsMessageFrame;
 import java.io.IOException;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -28,11 +30,13 @@ public class SockJsFluxClientTest {
 
   private Subscription subscription;
 
-  private static final Pattern SOCKJS_HEARTBEAT_PATTERN = Pattern.compile("h", Pattern.DOTALL);
-  //private static final Pattern SOCKJS_SUBSCRIBE_PATTERN = 
-  //    Pattern.compile("SUBSCRIBE.*", Pattern.DOTALL);
+  //private static final Pattern SOCKJS_HEARTBEAT_PATTERN = Pattern.compile("h", Pattern.DOTALL);
   private static final String SOCKJS_CONNECTED_MESSAGE = 
       "o";
+  private static final Pattern TEST_SUBSCRIBE_PATTERN = 
+      Pattern.compile("SUBSCRIBE", Pattern.DOTALL);
+  private static final Pattern TEST_UNSUBSCRIBE_PATTERN = 
+      Pattern.compile("UNSUBSCRIBE", Pattern.DOTALL);  
 
   @BeforeEach
   private void setup() {      
@@ -60,51 +64,7 @@ public class SockJsFluxClientTest {
   }
 
   @Test
-  public void testNoConnectionRetry() {
-
-    MockServerWithWebSocket mockServer = new MockServerWithWebSocket();
-
-    mockServer.beginVerifier()
-        .thenWaitServerStartThenUpgrade()
-        .thenExpectOpen()        
-        .thenExpectClose()
-        .thenWaitServerShutdown()
-        .thenWaitServerStartThenUpgrade()
-        .thenExpectOpen()                
-        .thenExpectClose()
-        .thenWaitServerShutdown()
-        .thenWaitServerStartThenUpgrade()    
-        .thenExpectOpen()                
-        .thenExpectClose()
-        .thenWaitServerShutdown()
-        .thenVerify(); 
-
-    WebSocketClient client = new ReactorNettyWebSocketClient();
-    SockJsFluxClient<String> sockJsClient =
-        SockJsFluxClient.<String>builder()
-        .webSocketClient(client)
-        .transportUriProvider(mockServer::getWebSocketUri)
-        .connectionTimeout(Duration.ofSeconds(1))
-        .objectMapper(objectMapper)
-        .doBeforeSessionOpen(Mono.defer(() -> {
-          mockServer.start();          
-          return Mono.delay(Duration.ofMillis(500)).then();
-        }))
-        .maxRetries(2)
-        .doAfterSessionClose(Mono.defer(() -> shutdown(mockServer)))
-        .build();
-
-    Flux<String> output = sockJsClient.get(
-        "/messages", String.class, Duration.ofMinutes(30), Flux.empty());
-
-    StepVerifier.create(output)
-        .consumeSubscriptionWith(sub -> subscription = sub)
-        .expectErrorMessage("Max retries exceeded")
-        .verify(Duration.ofSeconds(30));
-  }
-
-  @Test
-  public void testNoHeartbeatRetry() {
+  public void testSubscribe() {
 
     MockServerWithWebSocket mockServer = new MockServerWithWebSocket();
 
@@ -112,44 +72,31 @@ public class SockJsFluxClientTest {
         .thenWaitServerStartThenUpgrade(Duration.ofMinutes(5))
         .thenExpectOpen(Duration.ofMinutes(5))
         .thenSend(SOCKJS_CONNECTED_MESSAGE)        
-        .thenExpectMessage(SOCKJS_HEARTBEAT_PATTERN, Duration.ofMinutes(5))
-        .thenExpectMessage(SOCKJS_HEARTBEAT_PATTERN, Duration.ofMinutes(5))
-        .thenExpectMessage(SOCKJS_HEARTBEAT_PATTERN, Duration.ofMinutes(5))
-        //.thenExpectMessage(SOCKJS_DISCONNECT_PATTERN, Duration.ofMinutes(5))
-        //.thenSend(SOCKJS_RECEIPT_MESSAGE)
-        .thenExpectClose()
-        .thenWaitServerShutdown()
-        .thenWaitServerStartThenUpgrade()
-        .thenExpectOpen()        
-        .thenSend(SOCKJS_CONNECTED_MESSAGE)
-        .thenExpectMessage(SOCKJS_HEARTBEAT_PATTERN)
-        .thenExpectMessage(SOCKJS_HEARTBEAT_PATTERN)
-        .thenExpectMessage(SOCKJS_HEARTBEAT_PATTERN)     
-        //.thenExpectMessage(SOCKJS_DISCONNECT_PATTERN)
-        //.thenSend(SOCKJS_RECEIPT_MESSAGE)
-        .thenExpectClose()
-        .thenWaitServerShutdown()
-        .thenWaitServerStartThenUpgrade()    
-        .thenExpectOpen()        
-        .thenSend(SOCKJS_CONNECTED_MESSAGE)         
-        .thenExpectMessage(SOCKJS_HEARTBEAT_PATTERN)
-        .thenExpectMessage(SOCKJS_HEARTBEAT_PATTERN)
-        .thenExpectMessage(SOCKJS_HEARTBEAT_PATTERN)
-        //.thenExpectMessage(SOCKJS_DISCONNECT_PATTERN)
-        //.thenSend(SOCKJS_RECEIPT_MESSAGE)
+        .thenExpectMessage(TEST_SUBSCRIBE_PATTERN)
+        .thenExpectMessage(TEST_UNSUBSCRIBE_PATTERN)
         .thenExpectClose()
         .thenWaitServerShutdown()
         .thenVerify(); 
 
     WebSocketClient client = new ReactorNettyWebSocketClient();
-    SockJsFluxClient<String> sockJsClient =
-        SockJsFluxClient.<String>builder()
+    SockJsFluxClient<String, String, String> sockJsClient =
+        SockJsFluxClient.<String, String, String>builder()
         .webSocketClient(client)
         .transportUriProvider(mockServer::getWebSocketUri)
         .objectMapper(objectMapper)
         .connectionTimeout(Duration.ofSeconds(15))
-        .heartbeatReceiveFrequency(Duration.ofMillis(7500))
-        .heartbeatSendFrequency(Duration.ofSeconds(3))
+        .heartbeatReceiveFrequency(Duration.ZERO)
+        .heartbeatSendFrequency(Duration.ZERO)
+        .buildSubscribeFrames((added, all) -> {
+          return Arrays.asList(SockJsMessageFrame.builder()
+            .message("{action: \"SUBSCRIBE\"}")
+            .build());
+        })
+        .buildUnsubscribeFrames((removed, all) -> {
+          return Arrays.asList(SockJsMessageFrame.builder()
+            .message("{action: \"UNSUBSCRIBE\"}")
+            .build());
+        })
         .maxRetries(2)
         .doBeforeSessionOpen(Mono.defer(() -> {
           mockServer.start();          
@@ -162,8 +109,8 @@ public class SockJsFluxClientTest {
         "/messages", String.class, Duration.ofMinutes(30), Flux.empty());
 
     StepVerifier.create(output)
-        .consumeSubscriptionWith(sub -> subscription = sub)        
-        .expectErrorMessage("Max retries exceeded")
-        .verify(Duration.ofMinutes(30));
+        .thenAwait(Duration.ofSeconds(5))      
+        .thenCancel()        
+        .verify(Duration.ofSeconds(30));
   }
 }

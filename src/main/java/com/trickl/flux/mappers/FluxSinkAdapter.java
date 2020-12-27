@@ -2,7 +2,9 @@ package com.trickl.flux.mappers;
 
 import java.util.function.LongConsumer;
 import lombok.RequiredArgsConstructor;
+import org.reactivestreams.Publisher;
 import reactor.core.Disposable;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 import reactor.util.context.Context;
 
@@ -11,7 +13,7 @@ public class FluxSinkAdapter<T, S, E extends Exception> implements FluxSink<T> {
 
   private final FluxSink<S> inner;
 
-  private final ThrowingFunction<T, S, E> mapper;
+  private final ThrowingFunction<T, Publisher<S>, E> mapper;
 
   @Override
   public void complete() {
@@ -31,8 +33,10 @@ public class FluxSinkAdapter<T, S, E extends Exception> implements FluxSink<T> {
   @Override
   public FluxSink<T> next(T t) {
     try {
-      S s = mapper.apply(t);
-      inner.next(s);
+      Publisher<S> s = mapper.apply(t);
+      Flux.from(s).doOnNext(value -> {
+        inner.next(value);
+      }).subscribe();      
     } catch (Exception throwable) {
       inner.error(throwable);
     }    

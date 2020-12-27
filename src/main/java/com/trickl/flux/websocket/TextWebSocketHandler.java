@@ -38,7 +38,7 @@ public class TextWebSocketHandler implements WebSocketHandler {
     message.retain();
     String payload = message.getPayloadAsText();
 
-    log.log(Level.FINE, "\u001B[34mRECEIVED {0}\u001B[0m", new Object[] {payload});
+    log.log(Level.INFO, "\u001B[34mRECEIVED {0}\u001B[0m", new Object[] {payload});
     receive.next(payload);
   }
 }
