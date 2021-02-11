@@ -1,6 +1,7 @@
 package com.trickl.flux.websocket.stomp;
 
 import com.trickl.flux.mappers.ThrowingFunction;
+import com.trickl.flux.websocket.stomp.frames.StompHeartbeatFrame;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.List;
@@ -34,7 +35,11 @@ public class StompFrameDecoder implements
         .map(frameBuilder::apply)
         .map(
             frame -> {
-              log.log(Level.FINE, "\u001B[34mRECEIVED {0}\u001B[0m", new Object[] {frame});
+              if (frame instanceof StompHeartbeatFrame) {
+                log.log(Level.FINEST, "\u001B[34mRECEIVED {0}\u001B[0m", new Object[] {frame});
+              } else {
+                log.log(Level.FINE, "\u001B[34mRECEIVED {0}\u001B[0m", new Object[] {frame});
+              }              
               return frame;
             }));
   }

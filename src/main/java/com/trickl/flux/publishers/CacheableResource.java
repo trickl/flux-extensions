@@ -1,15 +1,11 @@
 package com.trickl.flux.publishers;
 
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.java.Log;
-import reactor.core.publisher.DirectProcessor;
-import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
-@Log
 @RequiredArgsConstructor
 public class CacheableResource<T> {
 
@@ -17,48 +13,26 @@ public class CacheableResource<T> {
 
   private final Predicate<T> shouldGenerate;
 
-  private AtomicBoolean shouldGenerateOnNextRequest = new AtomicBoolean(true);
+  private AtomicReference<Mono<T>> lastResourceRef = new AtomicReference<>();
 
-  private final DirectProcessor<T> lastResourceProcessor 
-      = DirectProcessor.create();
-
-  private final Flux<T> lastResourcePublisher 
-      = lastResourceProcessor.cache(1).log("lastResource");
-  
   public void supplyOnNextRequest() {
-    shouldGenerateOnNextRequest.set(true);
+    lastResourceRef.set(null);
   }
 
-  protected Mono<T> getResourceAndValidationKey() {            
-    Mono<T> nextResource;    
-
-    if (shouldGenerateOnNextRequest.getAndSet(false)) {
-      log.info("Generating new resource");
-      nextResource = resourceGenerator.apply(null);      
-    } else {
-      log.fine("Waiting on last resource");
-      nextResource = Mono.<T, T>usingWhen(
-        lastResourcePublisher, this::getNextResource,
-        lastResource -> Mono.empty());
-    } 
-
-    return Mono.zip(lastResourcePublisher.next().log("cachedResource"), 
-      nextResource.doOnNext(resource -> {      
-        log.info("Got resource - " + resource);
-        lastResourceProcessor.sink().next(resource);
-      }).log("generatedResource"),
-      (cachedResource, generatedResource) -> cachedResource).log("zipResource");
-  }
-
-  protected Mono<T> getNextResource(T lastResource) {
-    Mono<T> nextResource;
-    if (shouldGenerate.test(lastResource)) {
-      log.info("Creating new resource according to validation");
-      nextResource = resourceGenerator.apply(lastResource);
-    } else {
-      nextResource = Mono.just(lastResource);
-    }
-    return nextResource;
+  protected Mono<T> getResourceAndValidationKey() {   
+    return lastResourceRef.updateAndGet(lastResource -> {
+      if (lastResource == null) {
+        return resourceGenerator.apply(null).cache();
+      } else {
+        return lastResource.flatMap(last -> {
+          if (shouldGenerate.test(last)) {
+            return resourceGenerator.apply(null).cache();
+          } else {
+            return Mono.just(last);
+          }
+        });
+      }
+    });
   }
 
   /**

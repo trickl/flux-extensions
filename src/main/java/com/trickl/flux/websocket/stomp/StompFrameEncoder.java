@@ -1,6 +1,7 @@
 package com.trickl.flux.websocket.stomp;
 
 import com.trickl.flux.mappers.ThrowingFunction;
+import com.trickl.flux.websocket.stomp.frames.StompHeartbeatFrame;
 import java.io.IOException;
 import java.util.logging.Level;
 import lombok.RequiredArgsConstructor;
@@ -25,7 +26,11 @@ public class StompFrameEncoder
    * @throws IOException If the encoding failed
    */
   public Publisher<byte[]> apply(StompFrame stompMessage) throws IOException {
-    log.log(Level.FINE, "\u001B[34mSENDING {0}\u001B[0m", new Object[] {stompMessage});
+    if (stompMessage instanceof StompHeartbeatFrame) {
+      log.log(Level.FINEST, "\u001B[34mSENDING {0}\u001B[0m", new Object[] {stompMessage});
+    } else {
+      log.log(Level.FINE, "\u001B[34mSENDING {0}\u001B[0m", new Object[] {stompMessage});
+    }
     Message<byte[]> message = stompMessage.toMessage();
     return Mono.just(encoder.encode(message));
   }

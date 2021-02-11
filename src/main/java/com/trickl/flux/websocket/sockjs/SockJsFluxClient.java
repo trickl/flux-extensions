@@ -18,7 +18,6 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -46,7 +45,7 @@ public class SockJsFluxClient<TopicT, T, S> {
 
   private final BiFunction<String, Class<T>, Publisher<T>> payloadDecoder;
   private final Function<S, Publisher<String>> payloadEncoder;
-  private final BiConsumer<T, FluxSink<S>> handleProtocolFrames;
+  private final ProtocolFrameHandler<T, S> handleProtocolFrames;
   private final Class<T> responseClazz;
 
   @Builder
@@ -65,7 +64,7 @@ public class SockJsFluxClient<TopicT, T, S> {
       Duration disconnectionReceiptTimeout,
       Duration initialRetryDelay,
       Duration retryConsiderationPeriod,
-      BiConsumer<T, FluxSink<S>> handleProtocolFrames,
+      ProtocolFrameHandler<T, S> handleProtocolFrames,
       Class<T> responseClazz,
       BiFunction<String, Class<T>, Publisher<T>> payloadDecoder,
       Function<S, Publisher<String>> payloadEncoder,
@@ -133,13 +132,13 @@ public class SockJsFluxClient<TopicT, T, S> {
       .orElse((data) -> encodeDataFrame(data));
 
     this.handleProtocolFrames = Optional.ofNullable(handleProtocolFrames)
-      .orElse((data, responseSink) -> {});
+      .orElse((data, responseSink, onComplete) -> {});
 
     this.responseClazz = responseClazz;
   }
 
-  protected Publisher<SockJsFrame> 
-      processProtocolFrames(SockJsFrame frame, FluxSink<SockJsFrame> responseSink) {
+  protected Publisher<SockJsFrame> processProtocolFrames(
+      SockJsFrame frame, FluxSink<SockJsFrame> responseSink, Runnable onComplete) {
 
     return Mono.just(frame)
       .flatMapMany(f -> {
@@ -157,7 +156,7 @@ public class SockJsFluxClient<TopicT, T, S> {
 
           Mono<SockJsFrame> protocolActions = Flux.from(
               Flux.from(payloadDecoder.apply(messageFrame.getMessage(), responseClazz))
-              .doOnNext(data -> handleProtocolFrames.accept(data, sendSink))
+              .doOnNext(data -> handleProtocolFrames.accept(data, sendSink, onComplete))
           ).ignoreElements().cast(SockJsFrame.class);
     
           return Flux.just(f).mergeWith(protocolActions);
@@ -183,7 +182,16 @@ public class SockJsFluxClient<TopicT, T, S> {
     return heartbeatReceiveFrequency;
   }
 
+  @SuppressWarnings("unchecked")
   protected Publisher<T> decodeDataFrame(String payload, Class<T> messageType) {
+    if (messageType == null) {
+      throw new NullPointerException("messageType");
+    }
+
+    if (String.class.equals(messageType)) {
+      return Mono.just((T) payload);
+    }
+
     return Flux.just(payload)
             .flatMap(new ThrowableMapper<>(
                 p -> objectMapper.readValue(p, messageType)));
@@ -248,5 +256,10 @@ public class SockJsFluxClient<TopicT, T, S> {
         .cast(SockJsMessageFrame.class)
         .map(messageFrame -> messageFrame.getMessage())
         .flatMap(message -> payloadDecoder.apply(message, messageType));
+  }
+
+  @FunctionalInterface
+  public interface ProtocolFrameHandler<T, S> {
+    void accept(T message, FluxSink<S> send, Runnable onComplete);
   }
 }

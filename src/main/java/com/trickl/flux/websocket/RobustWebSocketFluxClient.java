@@ -131,8 +131,8 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
   private Function<T, Optional<Throwable>> decodeErrorFrame = (T frame) -> Optional.empty();
 
   @Builder.Default
-  private BiFunction<T, FluxSink<T>, Publisher<T>> handleProtocolFrames 
-      = (T frame, FluxSink<T> sink) -> Mono.just(frame);
+  private ProtocolFrameHandler<T> handleProtocolFrames 
+      = (T frame, FluxSink<T> sink, Runnable onComplete) -> Mono.just(frame);
 
   @Builder.Default
   private ThrowingFunction<T, Publisher<S>, IOException> encoder = frame -> Mono.empty();
@@ -146,9 +146,12 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
   public static final String ANSI_RESET = "\u001B[0m";
   public static final String ANSI_RED = "\u001B[31m";
 
+  private final Flux<SharedStreamContext<T, TopicT>> sharedStreamContexts 
+      = getSharedStreamContexts().cache(1);
+
   private final CacheableResource<SharedStreamContext<T, TopicT>> sharedStreamContext =
       new CacheableResource<SharedStreamContext<T, TopicT>>(
-          context -> getSharedStreamContexts().cache(1).next(), context -> {
+          context -> sharedStreamContexts.next(), context -> {
         return !context.getIsTerminated().get();
       });
 
@@ -278,8 +281,10 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
             sendErrorFrame(error,
                 context.getResponseContext().getTopicContext().getStreamRequestProcessor().sink());
           });
-    }).retryWhen(ExponentialBackoffRetry.builder().initialRetryDelay(initialRetryDelay)
-        .considerationPeriod(retryConsiderationPeriod).maxRetries(maxRetries)
+    }).retryWhen(ExponentialBackoffRetry.builder()
+        .initialRetryDelay(initialRetryDelay)
+        .considerationPeriod(retryConsiderationPeriod)
+        .maxRetries(maxRetries)
         .name("ConnectedStreamContext").build()).log("sharedStream", Level.FINE).publish()
         .refCount(1, Duration.ofSeconds(1));
 
@@ -333,7 +338,9 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
         .flatMap(new ThrowableMapper<T, T>(this::handleErrorFrame))        
         .mergeWith(Flux.from(context.getSubscriptionActionsFlux()).flatMap(none -> Mono.empty()))
         .flatMap(frame -> handleProtocolFrames.apply(
-          frame, context.getTopicContext().getStreamRequestProcessor().sink()))
+          frame, context.getTopicContext().getStreamRequestProcessor().sink(), () -> {
+            context.getTopicContext().getStreamRequestProcessor().complete();
+          }))
         .log("sharedBase", Level.FINE)
         .share().log("base", Level.FINE);
 
@@ -556,5 +563,10 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
     protected final Flux<T> sharedStream;
 
     protected final AtomicBoolean isTerminated;
+  }
+
+  @FunctionalInterface
+  public interface ProtocolFrameHandler<T> {
+    Publisher<T> apply(T frame, FluxSink<T> sendSink, Runnable onComplete);
   }
 }

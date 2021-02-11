@@ -77,7 +77,7 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
 
   protected void handleSubscription(SubscriptionDetails subscription) 
       throws SubscriptionFailedException {
-    log.info("Handling subscription " + subscription.getId());
+    log.info("Handling subscription " + subscription.getDestination());
 
     String destination = subscription.getDestination();
     SimpMessageSender<T> messageSender = new SimpMessageSender<>(messagingTemplate,
@@ -126,7 +126,7 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
   protected void handleStreamCancel(StreamId streamId, SubscriptionDetails subscription) {
     log.info("Stream cancelled " + streamId.toString());
     subscription.setCancelTime(Instant.now());
-    setStreamTerminated(streamId, subscription.getId());
+    setStreamTerminated(streamId, subscription.getDestination());
   }
 
   protected void handleStreamError(StreamId streamId, 
@@ -134,22 +134,22 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
     log.log(Level.WARNING, "Stream error " + streamId.toString(), error);
     subscription.setErrorTime(Instant.now());
     subscription.setErrorMessage(error.toString());
-    setStreamTerminated(streamId, subscription.getId());
+    setStreamTerminated(streamId, subscription.getDestination());
   }
 
   protected void handleStreamComplete(StreamId streamId, SubscriptionDetails subscription) {
     log.info("Stream completed " + streamId.toString());
     subscription.setCompleteTime(Instant.now());
-    setStreamTerminated(streamId, subscription.getId());
+    setStreamTerminated(streamId, subscription.getDestination());
   }
 
-  protected void setStreamTerminated(StreamId streamId, String subscriptionId) {
+  protected void setStreamTerminated(StreamId streamId, String destination) {
     log.info("Marking stream as terminated " + streamId.toString());
     fluxes.computeIfPresent(
         streamId,
         (id, flux) -> {
           subscriptionDetails.computeIfPresent(
-              subscriptionId,
+              destination,
               (i, detail) -> {
                 detail.setTerminated(true);
                 return detail;
@@ -164,17 +164,17 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
     sessionDetails.put(session.getId(), session);
   }
 
-  protected void handleStreamSubscription(SubscriptionDetails stream) {
-    log.info("Handling stream subscription " + stream.getId());
-    stream.setSubscriptionTime(Instant.now());
-    subscriptionDetails.put(stream.getDestination(), stream);
+  protected void handleStreamSubscription(SubscriptionDetails subscription) {
+    log.info("Handling stream subscription " + subscription.getDestination());
+    subscription.setSubscriptionTime(Instant.now());
+    subscriptionDetails.put(subscription.getDestination(), subscription);
   }
 
   protected void handleFluxSubscription(SubscriptionDetails subscription,
       Subscription fluxSubscription) {
-    log.info("Handling flux subscription " + subscription.getId());
+    log.info("Handling flux subscription " + subscription.getDestination());
     subscription.setSubscriberCount(subscription.getSubscriberCount() + 1);
-    subscriptions.put(subscription.getId(), fluxSubscription);
+    subscriptions.put(subscription.getDestination(), fluxSubscription);
   }
 
   protected void handleFluxSubscriberCancel(SubscriptionDetails subscription) {
@@ -217,19 +217,19 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
   /**
    * Cancel a subscription.
    *
-   * @param subscriptionId The subscription to unsubscribe
+   * @param destination The subscription to unsubscribe
    */
-  public void unsubscribe(String subscriptionId) {
-    log.info("Unsubscribing " + subscriptionId);
+  public void unsubscribe(String destination) {
+    log.info("Unsubscribing " + destination);
     subscriptionDetails.computeIfPresent(
-        subscriptionId,
+        destination,
         (id, subscription) -> {
           subscription.setUnsubscribeTime(Instant.now());
           return subscription;
         });
 
     subscriptions.computeIfPresent(
-        subscriptionId,
+        destination,
         (id, subscription) -> {
           subscription.cancel();          
           return null;
@@ -290,7 +290,7 @@ public class WebSocketRequestRouter<T> implements SmartApplicationListener {
 
       subscriptionDetails.values().stream()
           .filter(sub -> sub.getSessionId() == sessionId)
-          .map(SubscriptionDetails::getId)
+          .map(SubscriptionDetails::getDestination)
           .forEach(this::unsubscribe);
 
     } else if (event instanceof SessionUnsubscribeEvent) {

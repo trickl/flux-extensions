@@ -49,17 +49,19 @@ public class WebSocketFluxClient<T> {
    * @return A flux of (untyped) objects
    */
   public Flux<T> get(Publisher<T> send) {
+    EmitterProcessor<T> closeProcessor = EmitterProcessor.create();
+    FluxSink<T> closeSink = closeProcessor.sink();
     return Flux.<T, SessionContext<T>>usingWhen(
-        openSession(send).log("websocketsession", Level.FINER),
+        openSession(Flux.merge(send, closeProcessor)).log("websocketsession", Level.FINER),
         context -> Flux.from(context.getReceivePublisher()).log("receivePublisher", Level.FINE),
         context -> {
           log.info("Disposing of connection");
-          return doBeforeClose.apply(context.getReceivePublisher())
+          return doBeforeClose.apply(closeProcessor)
               .onErrorContinue((error, value) -> {
                 log.warning("An error occured prior to closing the session: " + error.getMessage());
               })
               .log("do before close", Level.FINER)
-              .then(closeSession(context)).log("cleanup-session");
+              .then(closeSession(context, closeSink)).log("cleanup-session");
         }).log("websocketfluxclient", Level.FINER);
   }
 
@@ -109,12 +111,13 @@ public class WebSocketFluxClient<T> {
         }));
   }
 
-  protected Mono<Void> closeSession(SessionContext<T> context) {
+  protected Mono<Void> closeSession(SessionContext<T> context, FluxSink<T> closeSink) {
+    closeSink.complete();
     return context.getWebSocketSession().close().log("close", Level.FINER)
         .then(Mono.create(sink -> {
           context.getSubscription().dispose();
           sink.success();             
-        }))
+        }))        
         .then(doAfterClose.log("after-session-close", Level.FINER)
         ).log("closeSession", Level.FINER);
   }

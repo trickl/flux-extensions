@@ -56,8 +56,7 @@ public class BinaryWebSocketHandler implements WebSocketHandler {
     });
   }
 
-  protected WebSocketMessage handleMessage(WebSocketMessage message) throws IOException {
-    log.info("Handling message...");
+  protected WebSocketMessage handleMessage(WebSocketMessage message) throws IOException {    
     message.retain();
     DataBuffer payload = message.getPayload();
     InputStream payloadStream = payload.asInputStream();

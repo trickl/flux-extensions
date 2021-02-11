@@ -3,6 +3,7 @@ package com.trickl.flux.websocket.sockjs;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trickl.flux.config.WebSocketConfiguration;
 import com.trickl.flux.websocket.MockServerWithWebSocket;
+import com.trickl.flux.websocket.VerifierComplete;
 import com.trickl.flux.websocket.sockjs.frames.SockJsMessageFrame;
 import java.io.IOException;
 import java.time.Duration;
@@ -33,10 +34,16 @@ public class SockJsFluxClientTest {
   //private static final Pattern SOCKJS_HEARTBEAT_PATTERN = Pattern.compile("h", Pattern.DOTALL);
   private static final String SOCKJS_CONNECTED_MESSAGE = 
       "o";
-  private static final Pattern TEST_SUBSCRIBE_PATTERN = 
-      Pattern.compile("SUBSCRIBE", Pattern.DOTALL);
-  private static final Pattern TEST_UNSUBSCRIBE_PATTERN = 
-      Pattern.compile("UNSUBSCRIBE", Pattern.DOTALL);  
+  private static final String ECHO_MESSAGE = 
+      "a[\"ECHO\"]";
+  private static final String CLOSE_MESSAGE = 
+      "a[\"CLOSE\"]";
+  private static final Pattern SUBSCRIBE_PATTERN = 
+      Pattern.compile(Pattern.quote("[\"SUBSCRIBE\"]"), Pattern.DOTALL);
+  private static final Pattern UNSUBSCRIBE_PATTERN = 
+      Pattern.compile(Pattern.quote("[\"UNSUBSCRIBE\"]"), Pattern.DOTALL);  
+  private static final Pattern ECHO_RESPONSE_PATTERN = 
+      Pattern.compile("\\[\\\"\\\\\\\"ECHO-ECHO\\\\\\\"\\\"\\]", Pattern.DOTALL);  
 
   @BeforeEach
   private void setup() {      
@@ -68,12 +75,12 @@ public class SockJsFluxClientTest {
 
     MockServerWithWebSocket mockServer = new MockServerWithWebSocket();
 
-    mockServer.beginVerifier()
+    VerifierComplete verifierComplete = mockServer.beginVerifier()
         .thenWaitServerStartThenUpgrade(Duration.ofMinutes(5))
         .thenExpectOpen(Duration.ofMinutes(5))
         .thenSend(SOCKJS_CONNECTED_MESSAGE)        
-        .thenExpectMessage(TEST_SUBSCRIBE_PATTERN)
-        .thenExpectMessage(TEST_UNSUBSCRIBE_PATTERN)
+        .thenExpectMessage(SUBSCRIBE_PATTERN)
+        .thenExpectMessage(UNSUBSCRIBE_PATTERN)
         .thenExpectClose()
         .thenWaitServerShutdown()
         .thenVerify(); 
@@ -89,12 +96,12 @@ public class SockJsFluxClientTest {
         .heartbeatSendFrequency(Duration.ZERO)
         .buildSubscribeFrames((added, all) -> {
           return Arrays.asList(SockJsMessageFrame.builder()
-            .message("{action: \"SUBSCRIBE\"}")
+            .message("SUBSCRIBE")
             .build());
         })
         .buildUnsubscribeFrames((removed, all) -> {
           return Arrays.asList(SockJsMessageFrame.builder()
-            .message("{action: \"UNSUBSCRIBE\"}")
+            .message("UNSUBSCRIBE")
             .build());
         })
         .maxRetries(2)
@@ -112,5 +119,105 @@ public class SockJsFluxClientTest {
         .thenAwait(Duration.ofSeconds(5))      
         .thenCancel()        
         .verify(Duration.ofSeconds(30));
+
+    verifierComplete.waitComplete(Duration.ofSeconds(10));
+  }
+
+  @Test
+  public void testEcho() {
+
+    MockServerWithWebSocket mockServer = new MockServerWithWebSocket();
+
+    VerifierComplete verifierComplete = mockServer.beginVerifier()
+        .thenWaitServerStartThenUpgrade(Duration.ofMinutes(5))
+        .thenExpectOpen(Duration.ofMinutes(5))
+        .thenSend(SOCKJS_CONNECTED_MESSAGE)        
+        .thenSend(ECHO_MESSAGE)
+        .thenExpectMessage(ECHO_RESPONSE_PATTERN)
+        .thenExpectClose()
+        .thenWaitServerShutdown()
+        .thenVerify(); 
+
+    WebSocketClient client = new ReactorNettyWebSocketClient();
+    SockJsFluxClient<String, String, String> sockJsClient =
+        SockJsFluxClient.<String, String, String>builder()
+        .webSocketClient(client)
+        .transportUriProvider(mockServer::getWebSocketUri)
+        .objectMapper(objectMapper)
+        .connectionTimeout(Duration.ofSeconds(15))
+        .responseClazz(String.class)
+        .heartbeatReceiveFrequency(Duration.ZERO)
+        .heartbeatSendFrequency(Duration.ZERO)
+        .handleProtocolFrames((message, send, onComplete) -> {
+          if ("ECHO".equals(message)) {
+            send.next("ECHO-ECHO");
+          }
+        })
+        .maxRetries(2)
+        .doBeforeSessionOpen(Mono.defer(() -> {
+          mockServer.start();          
+          return Mono.delay(Duration.ofMillis(500)).then();
+        }))
+        .doAfterSessionClose(Mono.defer(() -> shutdown(mockServer)))
+        .build();
+
+    Flux<String> output = sockJsClient.get(
+        "/messages", String.class, Duration.ofMinutes(30), Flux.empty());
+        
+    StepVerifier.create(output)
+        .thenAwait(Duration.ofSeconds(5))      
+        .thenCancel()        
+        .verify(Duration.ofSeconds(30));
+
+    verifierComplete.waitComplete(Duration.ofSeconds(10));
+  }
+
+  @Test
+  public void testProtocolClose() {
+
+    MockServerWithWebSocket mockServer = new MockServerWithWebSocket();
+
+    VerifierComplete verifierComplete = mockServer.beginVerifier()
+        .thenWaitServerStartThenUpgrade(Duration.ofMinutes(5))
+        .thenExpectOpen(Duration.ofMinutes(5))
+        .thenSend(SOCKJS_CONNECTED_MESSAGE)        
+        .thenSend(ECHO_MESSAGE)
+        .thenSend(CLOSE_MESSAGE)
+        .thenExpectClose()
+        .thenWaitServerShutdown()
+        .thenVerify(); 
+
+    WebSocketClient client = new ReactorNettyWebSocketClient();
+    SockJsFluxClient<String, String, String> sockJsClient =
+        SockJsFluxClient.<String, String, String>builder()
+        .webSocketClient(client)
+        .transportUriProvider(mockServer::getWebSocketUri)
+        .objectMapper(objectMapper)
+        .connectionTimeout(Duration.ofSeconds(15))
+        .responseClazz(String.class)
+        .heartbeatReceiveFrequency(Duration.ZERO)
+        .heartbeatSendFrequency(Duration.ZERO)
+        .handleProtocolFrames((message, send, onComplete) -> {
+          if ("CLOSE".equals(message)) {
+            onComplete.run();
+          }
+        })
+        .maxRetries(2)
+        .doBeforeSessionOpen(Mono.defer(() -> {
+          mockServer.start();          
+          return Mono.delay(Duration.ofMillis(500)).then();
+        }))
+        .doAfterSessionClose(Mono.defer(() -> shutdown(mockServer)))
+        .build();
+
+    Flux<String> output = sockJsClient.get(
+        "/messages", String.class, Duration.ofMinutes(30), Flux.empty());
+        
+    StepVerifier.create(output)
+        .thenAwait(Duration.ofSeconds(20))      
+        .thenCancel()        
+        .verify(Duration.ofSeconds(30));
+
+    verifierComplete.waitComplete(Duration.ofSeconds(10));
   }
 }
