@@ -25,13 +25,15 @@ public class RenewableResourceTest {
 
     VirtualTimeScheduler scheduler = VirtualTimeScheduler.getOrSet();
     RenewableResource<Tuple2<String, Instant>> tokenSource = 
-        new RenewableResource<Tuple2<String, Instant>>(
-            () -> createToken(Instant.ofEpochMilli(scheduler.now(TimeUnit.MILLISECONDS))),
-            (Tuple2<String, Instant> token) -> 
-              createToken(Instant.ofEpochMilli(scheduler.now(TimeUnit.MILLISECONDS))),
-            (Tuple2<String, Instant> token) -> token.getT2(),
-        scheduler,
-        Duration.ofSeconds(3));
+        RenewableResource.<Tuple2<String, Instant>>builder()
+        .resourceGenerator(
+          () -> createToken(Instant.ofEpochMilli(scheduler.now(TimeUnit.MILLISECONDS))))
+        .resourceRenewer((Tuple2<String, Instant> token) -> 
+           createToken(Instant.ofEpochMilli(scheduler.now(TimeUnit.MILLISECONDS))))
+        .expiryAccessor((Tuple2<String, Instant> token) -> token.getT2())
+        .scheduler(scheduler)
+        .resourceRenewPeriodBeforeExpiry(Duration.ofSeconds(3))
+        .build();
 
     for (int i = 0; i < 35; ++i) {
       StepVerifier.create(tokenSource.getResource())

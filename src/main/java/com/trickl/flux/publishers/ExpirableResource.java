@@ -1,9 +1,11 @@
 package com.trickl.flux.publishers;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
+import lombok.Builder;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Scheduler;
 
@@ -18,14 +20,18 @@ public class ExpirableResource<T> {
    * @param expiryAccessor Determine the expiration from the resource.
    * @param scheduler The flux scheduler.   
    */
+  @Builder
   public ExpirableResource(
       Function<T, Mono<T>> resourceGenerator,
       Function<T, Instant> expiryAccessor,
+      Duration timeout,
       Scheduler scheduler) {
-    cacheableResource = new CacheableResource<T>(
-        resourceGenerator::apply,
-        lastResource -> shouldGenerate(lastResource, expiryAccessor, scheduler)
-    );
+    cacheableResource = CacheableResource.<T>builder()
+        .resourceGenerator(resourceGenerator::apply)
+        .shouldGenerate(
+          lastResource -> shouldGenerate(lastResource, expiryAccessor, scheduler))
+        .timeout(timeout)
+        .build();
   }
 
   protected boolean shouldGenerate(

@@ -150,10 +150,10 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
       = getSharedStreamContexts().cache(1);
 
   private final CacheableResource<SharedStreamContext<T, TopicT>> sharedStreamContext =
-      new CacheableResource<SharedStreamContext<T, TopicT>>(
-          context -> sharedStreamContexts.next(), context -> {
-        return !context.getIsTerminated().get();
-      });
+      CacheableResource.<SharedStreamContext<T, TopicT>>builder()
+          .resourceGenerator(context -> sharedStreamContexts.next())
+          .shouldGenerate(context -> !context.getIsTerminated().get())            
+          .build();
 
   protected TopicContext<T, TopicT> createTopicContext() {
     log.info("Creating topic context");

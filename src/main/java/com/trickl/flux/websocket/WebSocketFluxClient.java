@@ -61,7 +61,7 @@ public class WebSocketFluxClient<T> {
                 log.warning("An error occured prior to closing the session: " + error.getMessage());
               })
               .log("do before close", Level.FINER)
-              .then(closeSession(context, closeSink)).log("cleanup-session");
+              .then(closeSession(context, closeSink)).log("cleanup-session", Level.FINER);
         }).log("websocketfluxclient", Level.FINER);
   }
 

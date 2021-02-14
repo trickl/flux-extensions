@@ -6,6 +6,7 @@ import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import lombok.Builder;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Scheduler;
 
@@ -22,21 +23,28 @@ public class RenewableResource<T> {
    * @param scheduler The flux scheduler.  
    * @param resourceRenewPeriodBeforeExpiry When should we renew?
    */
+  @Builder
   public RenewableResource(
       Supplier<Mono<T>> resourceGenerator,
       Function<T, Mono<T>> resourceRenewer,
       Function<T, Instant> expiryAccessor,
+      Duration timeout,
       Scheduler scheduler,
       Duration resourceRenewPeriodBeforeExpiry) {
-    expiryableResource = new ExpirableResource<T>(
-        resource -> generate(
+    expiryableResource = ExpirableResource.<T>builder()
+        .resourceGenerator(
+            resource -> generate(
           resource, 
           resourceGenerator, 
           resourceRenewer,
           expiryAccessor,
-          scheduler),
-        resource -> getRenewTime(resource, expiryAccessor, resourceRenewPeriodBeforeExpiry),
-        scheduler);
+          scheduler))
+        .expiryAccessor(
+            resource -> getRenewTime(
+              resource, expiryAccessor, resourceRenewPeriodBeforeExpiry))
+        .scheduler(scheduler)
+        .timeout(timeout)
+        .build();
   }
 
   protected Mono<T> generate(
