@@ -18,6 +18,7 @@ public class ExpirableResource<T> {
    * 
    * @param resourceGenerator The supplier of resources.
    * @param expiryAccessor Determine the expiration from the resource.
+   * @param timeout How long to wait for a response.
    * @param scheduler The flux scheduler.   
    */
   @Builder

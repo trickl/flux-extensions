@@ -20,6 +20,7 @@ public class RenewableResource<T> {
    * @param resourceGenerator The supplier of resources.
    * @param resourceRenewer Take a resource and make it usable again.
    * @param expiryAccessor Determine the expiration from the resource.
+   * @param timeout How long to wait for a response.
    * @param scheduler The flux scheduler.  
    * @param resourceRenewPeriodBeforeExpiry When should we renew?
    */
