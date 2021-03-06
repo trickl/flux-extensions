@@ -2,7 +2,7 @@ package com.trickl.model.streams;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import java.time.Instant;
-import javax.validation.constraints.NotNull;
+import javax.annotation.Nonnull;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -17,9 +17,9 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class SubscriptionDetails {
-  @NotNull protected String sessionId;
-  @NotNull protected String id;
-  @NotNull protected String destination;
+  @Nonnull protected String sessionId;
+  @Nonnull protected String id;
+  @Nonnull protected String destination;
 
   protected int subscriberCount;
   protected int messageCount;

@@ -3,19 +3,20 @@ package com.trickl.flux.retry;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.List;
-import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import lombok.Builder;
 import lombok.extern.java.Log;
+import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.util.function.Tuple2;
+import reactor.util.retry.Retry;
 
 @Log
 @Builder
-public class ExponentialBackoffRetry implements Function<Flux<Throwable>, Flux<Long>> {
+public class ExponentialBackoffRetry extends Retry {
   @Builder.Default private Duration initialRetryDelay = Duration.ofSeconds(1);
   @Builder.Default private Duration considerationPeriod = Duration.ofSeconds(32);
   @Builder.Default private int maxRetries = 3;
@@ -23,16 +24,17 @@ public class ExponentialBackoffRetry implements Function<Flux<Throwable>, Flux<L
   @Builder.Default private Predicate<Throwable> shouldRetry = error -> true;
   
   @Override
-  public Flux<Long> apply(Flux<Throwable> errorFlux) {
+  public Publisher<?> generateCompanion(Flux<Retry.RetrySignal> errorFlux) {
     return errorFlux
-        .flatMap(error -> {
-          if (!shouldRetry.test(error)) {
-            return Mono.<Throwable>error(new IllegalStateException("Failed retry predicate"));
+        .flatMap(retrySignal -> {
+          if (!shouldRetry.test(retrySignal.failure())) {
+            return Mono.<Retry.RetrySignal>error(
+              new IllegalStateException("Failed retry predicate"));
           }
-          return Mono.just(error);
+          return Mono.just(retrySignal.copy());
         })
         .elapsed()
-        .scan(Collections.<Tuple2<Long, Throwable>>emptyList(),
+        .scan(Collections.<Tuple2<Long, Retry.RetrySignal>>emptyList(),
             this::accumulateErrors)
         .map(List::size).flatMap(errorCount -> {
           if (errorCount > maxRetries) {
@@ -46,8 +48,8 @@ public class ExponentialBackoffRetry implements Function<Flux<Throwable>, Flux<L
         });
   }
 
-  protected List<Tuple2<Long, Throwable>> accumulateErrors(
-      List<Tuple2<Long, Throwable>> last, Tuple2<Long, Throwable> latest) {
+  protected List<Tuple2<Long, Retry.RetrySignal>> accumulateErrors(
+      List<Tuple2<Long, Retry.RetrySignal>> last, Tuple2<Long, Retry.RetrySignal> latest) {
     long considerationStart = latest.getT1() - considerationPeriod.toMillis();
     return Stream.concat(last.stream(), Stream.of(latest))
       .filter(tuple -> tuple.getT1() > considerationStart)

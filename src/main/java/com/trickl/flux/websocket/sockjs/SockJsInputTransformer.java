@@ -2,12 +2,12 @@ package com.trickl.flux.websocket.sockjs;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
+import java.text.ParseException;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.logging.Level;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.java.Log;
-import org.apache.el.parser.ParseException;
 import org.reactivestreams.Publisher;
 import org.springframework.web.reactive.socket.CloseStatus;
 import org.springframework.web.socket.sockjs.SockJsException;
@@ -49,7 +49,7 @@ public class SockJsInputTransformer implements Function<Publisher<String>, Flux<
       default:
         break;
     }
-    return Flux.error(new SockJsException("Bad SockJS Frame", new ParseException(payload)));
+    return Flux.error(new SockJsException("Bad SockJS Frame", new ParseException(payload, 0)));
   }
 
   private Publisher<String> handleOpenFrame() {
