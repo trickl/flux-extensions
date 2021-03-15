@@ -135,6 +135,7 @@ public class SockJsFluxClientTest {
         .thenSend(ECHO_MESSAGE)
         .thenExpectMessage(ECHO_RESPONSE_PATTERN)
         .thenExpectClose()
+        .then(() -> shutdown(mockServer).subscribe())
         .thenWaitServerShutdown()
         .thenVerify(); 
 
@@ -157,8 +158,7 @@ public class SockJsFluxClientTest {
         .doBeforeSessionOpen(Mono.defer(() -> {
           mockServer.start();          
           return Mono.delay(Duration.ofMillis(500)).then();
-        }))
-        .doAfterSessionClose(Mono.defer(() -> shutdown(mockServer)))
+        }))        
         .build();
 
     Flux<String> output = sockJsClient.get(
@@ -184,6 +184,7 @@ public class SockJsFluxClientTest {
         .thenSend(ECHO_MESSAGE)
         .thenSend(CLOSE_MESSAGE)
         .thenExpectClose()
+        .then(() -> shutdown(mockServer).subscribe())
         .thenWaitServerShutdown()
         .thenVerify(); 
 
@@ -206,8 +207,7 @@ public class SockJsFluxClientTest {
         .doBeforeSessionOpen(Mono.defer(() -> {
           mockServer.start();          
           return Mono.delay(Duration.ofMillis(500)).then();
-        }))
-        .doAfterSessionClose(Mono.defer(() -> shutdown(mockServer)))
+        }))        
         .build();
 
     Flux<String> output = sockJsClient.get(

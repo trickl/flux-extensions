@@ -2,9 +2,11 @@ package com.trickl.flux.websocket;
 
 import java.net.URI;
 import java.util.function.BiFunction;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.logging.Level;
+import javax.annotation.Nonnull;
 import lombok.Builder;
 import lombok.Value;
 import lombok.extern.java.Log;
@@ -13,11 +15,9 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.WebSocketSession;
 import org.springframework.web.reactive.socket.client.WebSocketClient;
-import reactor.core.Disposable;
-import reactor.core.publisher.EmitterProcessor;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Sinks;
 
 @Log
 @Builder
@@ -27,14 +27,15 @@ public class WebSocketFluxClient<T> {
 
   protected final Supplier<URI> transportUriProvider;
 
-  protected final BiFunction<FluxSink<T>, Publisher<T>, WebSocketHandler> handlerFactory;
+  @Nonnull
+  protected final BiFunction<Consumer<T>, Publisher<T>, WebSocketHandler> handlerFactory;
 
   @Builder.Default private Mono<HttpHeaders> webSocketHeadersProvider
       = Mono.fromSupplier(HttpHeaders::new);
 
   @Builder.Default private Mono<Void> doBeforeOpen = Mono.empty();
 
-  @Builder.Default private Function<FluxSink<T>, Mono<Void>> doAfterOpen
+  @Builder.Default private Function<Consumer<T>, Mono<Void>> doAfterOpen
       = response -> Mono.empty();
 
   @Builder.Default private Function<Publisher<T>, Mono<Void>> doBeforeClose 
@@ -49,83 +50,51 @@ public class WebSocketFluxClient<T> {
    * @return A flux of (untyped) objects
    */
   public Flux<T> get(Publisher<T> send) {
-    EmitterProcessor<T> closeProcessor = EmitterProcessor.create();
-    FluxSink<T> closeSink = closeProcessor.sink();
-    return Flux.<T, SessionContext<T>>usingWhen(
-        openSession(Flux.merge(send, closeProcessor)).log("websocketsession", Level.FINER),
-        context -> Flux.from(context.getReceivePublisher()).log("receivePublisher", Level.FINE),
-        context -> {
-          log.info("Disposing of connection");
-          return doBeforeClose.apply(closeProcessor)
-              .onErrorContinue((error, value) -> {
-                log.warning("An error occured prior to closing the session: " + error.getMessage());
-              })
-              .log("do before close", Level.FINER)
-              .then(closeSession(context, closeSink)).log("cleanup-session", Level.FINER);
-        }).log("websocketfluxclient", Level.FINER);
-  }
-
-  protected Mono<SessionContext<T>> openSession(Publisher<T> send) {  
-    EmitterProcessor<WebSocketSession> sessionProcessor = EmitterProcessor.create();
-    FluxSink<WebSocketSession> sessionSink = sessionProcessor.sink();
-    EmitterProcessor<T> receiveProcessor = EmitterProcessor.create();
-    FluxSink<T> receiveSink = receiveProcessor.sink();
-    Publisher<T> sharedReceivedPublisher = receiveProcessor
-        .log("sharedReceiveProcessor", Level.FINE).share();
-    EmitterProcessor<T> openProcessor = EmitterProcessor.create();
-    FluxSink<T> openSink = openProcessor.sink();
-    Disposable internalReceiveSubscription = Flux.from(sharedReceivedPublisher).subscribe();
+    Sinks.One<WebSocketSession> sessionSink = Sinks.one();
+    Sinks.Many<T> receiveSink = Sinks.many().multicast().onBackpressureBuffer();
+    Sinks.Many<T> sendAfterOpenSink = Sinks.many().multicast().onBackpressureBuffer();
+    Sinks.Many<T> sendBeforeCloseSink = Sinks.many().multicast().onBackpressureBuffer();
     
     Mono<Void> openSocket = webSocketHeadersProvider
         .<Void>flatMap(
             headers -> {
-              WebSocketHandler dataHandler = handlerFactory.apply(
-                  receiveSink, Flux.merge(send, openProcessor
+              WebSocketHandler dataHandler = handlerFactory.apply(receiveSink::tryEmitNext, 
+                  Flux.merge(send, sendAfterOpenSink.asFlux(), sendBeforeCloseSink.asFlux()
                   .log("openProcessor", Level.FINE)));
               SessionHandler sessionHandler =
                   new SessionHandler(
                       dataHandler, sessionSink);
+              CloseHandler<T> closeHander = new CloseHandler<T>(
+                  sessionHandler,
+                  receiveSink.asFlux(),
+                  doBeforeClose,
+                  doAfterClose);
               URI transportUri = transportUriProvider.get();
               log.info("Connecting to " + transportUri);
               return webSocketClient
-                  .execute(transportUri, headers, sessionHandler)
+                  .execute(transportUri, headers, closeHander)
                   .log("WebSocketClient", Level.FINE);
             })
-        .doOnError(receiveSink::error)
-        .doFinally(signal -> {
-          sessionSink.complete();
-          receiveSink.complete();
-          internalReceiveSubscription.dispose();
+        .doFinally(signal -> {          
+          receiveSink.tryEmitComplete();
+          sendAfterOpenSink.tryEmitComplete();
+          sendBeforeCloseSink.tryEmitComplete();
           log.info("Socket closed.");
         })
         .log("Connection", Level.FINER);
 
-    return doBeforeOpen.then(Mono.<SessionContext<T>, Disposable>using(
-        openSocket::subscribe,
-        subscription -> sessionProcessor.flatMap(
-          webSocketSession -> doAfterOpen.apply(openSink).then(Mono.just(
-            new SessionContext<T>(
-              webSocketSession, sharedReceivedPublisher, subscription)))).next(),
-        subscription -> {
-          log.info("Socket opened.");
-        }));
-  }
-
-  protected Mono<Void> closeSession(SessionContext<T> context, FluxSink<T> closeSink) {
-    closeSink.complete();
-    return context.getWebSocketSession().close().log("close", Level.FINER)
-        .then(Mono.create(sink -> {
-          context.getSubscription().dispose();
-          sink.success();             
-        }))        
-        .then(doAfterClose.log("after-session-close", Level.FINER)
-        ).log("closeSession", Level.FINER);
+    return doBeforeOpen.thenMany(Flux.merge(
+      openSocket.cast(WebSocketSession.class),
+      sessionSink.asMono().flatMap(webSocketSession ->
+        doAfterOpen.apply(sendAfterOpenSink::tryEmitNext).then(Mono.just(webSocketSession)))
+    )).flatMap(webSocketSession -> {
+      return  receiveSink.asFlux();
+    });
   }
 
   @Value
   private static class SessionContext<T> {
     protected final WebSocketSession webSocketSession;
     protected final Publisher<T> receivePublisher;
-    protected final Disposable subscription;
   }
 }

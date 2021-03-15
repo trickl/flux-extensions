@@ -20,6 +20,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import lombok.Builder;
@@ -30,6 +31,7 @@ import org.springframework.web.reactive.socket.client.WebSocketClient;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Sinks;
 
 @Log
 public class StompFluxClient {
@@ -183,7 +185,7 @@ public class StompFluxClient {
       StompErrorFrame.builder().message(error.toString()).build());
   }
 
-  protected Duration doConnect(FluxSink<StompFrame> streamRequestSink) {
+  protected Duration doConnect(Consumer<StompFrame> streamRequestSink) {
     log.fine("Sending Stomp Connection Frame");
     StompConnectFrame connectFrame =
         StompConnectFrame.builder()
@@ -192,7 +194,7 @@ public class StompFluxClient {
             .heartbeatReceiveFrequency(heartbeatReceiveFrequency)
             .host(robustWebSocketFluxClient.getTransportUriProvider().get().getHost())
             .build();
-    streamRequestSink.next(connectFrame);
+    streamRequestSink.accept(connectFrame);
 
     return connectionTimeout;
   }

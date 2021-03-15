@@ -91,6 +91,7 @@ public class StompFluxClientTest {
         .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
         .thenSend(STOMP_RECEIPT_MESSAGE)
         .thenExpectClose(Duration.ofSeconds(3))
+        .then(() -> shutdown(mockServer).subscribe())
         .thenWaitServerShutdown()
         .thenVerify();
 
@@ -118,8 +119,7 @@ public class StompFluxClientTest {
         .doBeforeSessionOpen(Mono.defer(() -> {
           mockServer.start();          
           return Mono.delay(Duration.ofMillis(500)).then();
-        }))
-        .doAfterSessionClose(Mono.defer(() -> shutdown(mockServer)))
+        }))        
         .build();
 
     VerifierComplete verifierComplete = mockServer.beginVerifier()
@@ -131,6 +131,7 @@ public class StompFluxClientTest {
         .thenExpectMessage(STOMP_UNSUBSCRIBE_PATTERN)
         .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
         .thenExpectClose(Duration.ofSeconds(3))
+        .then(() -> shutdown(mockServer).subscribe())
         .thenWaitServerShutdown()
         .thenVerify();
 
@@ -158,8 +159,7 @@ public class StompFluxClientTest {
         .doBeforeSessionOpen(Mono.defer(() -> {
           mockServer.start();          
           return Mono.delay(Duration.ofMillis(500)).then();
-        }))
-        .doAfterSessionClose(Mono.defer(() -> shutdown(mockServer)))
+        }))        
         .build();
 
     AtomicReference<Disposable> secondSubscription = new AtomicReference<>();
@@ -186,6 +186,7 @@ public class StompFluxClientTest {
         .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
         .thenSend(STOMP_RECEIPT_MESSAGE)
         .thenExpectClose(Duration.ofSeconds(3))
+        .then(() -> shutdown(mockServer).subscribe())
         .thenWaitServerShutdown()
         .thenVerify();
 
@@ -220,6 +221,7 @@ public class StompFluxClientTest {
         .thenExpectOpen()        
         .thenExpectMessage(STOMP_CONNECT_PATTERN)
         .thenExpectClose()
+        .then(() -> shutdown(mockServer).subscribe())
         .thenWaitServerShutdown()
         .thenVerify(); 
 
@@ -233,8 +235,7 @@ public class StompFluxClientTest {
           mockServer.start();          
           return Mono.delay(Duration.ofMillis(500)).then();
         }))
-        .maxRetries(2)
-        .doAfterSessionClose(Mono.defer(() -> shutdown(mockServer)))
+        .maxRetries(2)        
         .build();
 
     Flux<String> output = stompClient.get(
@@ -286,6 +287,7 @@ public class StompFluxClientTest {
         .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
         .thenSend(STOMP_RECEIPT_MESSAGE)
         .thenExpectClose()
+        .then(() -> shutdown(mockServer).subscribe())
         .thenWaitServerShutdown()
         .thenVerify(); 
 
@@ -301,8 +303,7 @@ public class StompFluxClientTest {
           log.info("Starting websocket session.");
           mockServer.start();          
           return Mono.delay(Duration.ofMillis(500)).then();
-        }))
-        .doAfterSessionClose(Mono.defer(() -> shutdown(mockServer)))
+        }))        
         .build();
 
     Flux<String> output = stompClient.get(
@@ -329,6 +330,7 @@ public class StompFluxClientTest {
         .thenExpectMessage(STOMP_DISCONNECT_PATTERN, Duration.ofMinutes(5))
         .thenSend(STOMP_RECEIPT_MESSAGE)
         .thenExpectClose()
+        .then(() -> shutdown(mockServer).subscribe())
         .thenWaitServerShutdown()       
         .thenVerify(); 
 
@@ -344,8 +346,7 @@ public class StompFluxClientTest {
           log.info("Starting websocket session.");
           mockServer.start();          
           return Mono.delay(Duration.ofMillis(500)).then();
-        }))
-        .doAfterSessionClose(Mono.defer(() -> shutdown(mockServer)))
+        }))        
         .build();
 
     Flux<String> output = stompClient.get(

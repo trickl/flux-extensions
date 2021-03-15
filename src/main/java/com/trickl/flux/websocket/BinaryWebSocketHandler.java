@@ -3,6 +3,7 @@ package com.trickl.flux.websocket;
 import com.trickl.flux.mappers.ThrowableMapper;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.function.Consumer;
 import java.util.logging.Level;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.java.Log;
@@ -13,14 +14,13 @@ import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.WebSocketMessage;
 import org.springframework.web.reactive.socket.WebSocketSession;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
 
 @Log
 @RequiredArgsConstructor
 public class BinaryWebSocketHandler implements WebSocketHandler {
 
-  private final FluxSink<byte[]> receive;
+  private final Consumer<byte[]> receive;
 
   private final Publisher<byte[]> send;
 
@@ -39,13 +39,9 @@ public class BinaryWebSocketHandler implements WebSocketHandler {
                log.info("Output completed with signal - " 
                + signalType.name())).log("output", Level.FINER);
     
-    return Mono.usingWhen(Mono.just(session), sessionResource -> 
-      Mono.zip(input, output).then()
-          .doFinally(signalType -> log.info(
-               "Binary socket stream completed with signal - " + signalType.name())),
-      sessionResource -> session.close().doOnSuccess(element -> 
-      log.log(Level.INFO, "Closed session.")
-    ));
+    
+    return Mono.zip(input, output).then()
+        .then(Mono.fromRunnable(() -> log.info("BinaryWebSocketHandler complete")));
   }
 
   protected WebSocketMessage createMessage(WebSocketSession session, byte[] message) {
@@ -61,7 +57,7 @@ public class BinaryWebSocketHandler implements WebSocketHandler {
     DataBuffer payload = message.getPayload();
     InputStream payloadStream = payload.asInputStream();
     byte[] buffer = IOUtils.toByteArray(payloadStream);
-    receive.next(buffer);
+    receive.accept(buffer);
     return message;
   }
 }

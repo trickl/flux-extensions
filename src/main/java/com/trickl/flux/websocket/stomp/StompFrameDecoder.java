@@ -6,17 +6,16 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.logging.Level;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.java.Log;
-import org.reactivestreams.Publisher;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.simp.stomp.StompDecoder;
-import reactor.core.publisher.Flux;
 
 @Log
 @RequiredArgsConstructor
 public class StompFrameDecoder implements
-    ThrowingFunction<byte[], Publisher<StompFrame>, IOException> {
+    ThrowingFunction<byte[], List<StompFrame>, IOException> {
 
   private final StompDecoder decoder = new StompDecoder();
 
@@ -27,11 +26,11 @@ public class StompFrameDecoder implements
    * @return A typed message
    * @throws IOException If the message cannot be decoded
    */
-  public Publisher<StompFrame> apply(byte[] payload) throws IOException {
+  public List<StompFrame> apply(byte[] payload) throws IOException {
     StompFrameBuilder frameBuilder = new StompFrameBuilder();
     ByteBuffer byteBuffer = ByteBuffer.wrap(payload);
     List<Message<byte[]>> messages = decoder.decode(byteBuffer);
-    return Flux.fromStream(messages.stream()
+    return messages.stream()
         .map(frameBuilder::apply)
         .map(
             frame -> {
@@ -41,6 +40,7 @@ public class StompFrameDecoder implements
                 log.log(Level.FINE, "\u001B[34mRECEIVED {0}\u001B[0m", new Object[] {frame});
               }              
               return frame;
-            }));
+            })
+          .collect(Collectors.toList());
   }
 }

@@ -37,6 +37,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 import java.util.function.BiPredicate;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -53,6 +54,7 @@ import reactor.core.publisher.EmitterProcessor;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Sinks;
 
 @Log
 @Builder
@@ -63,7 +65,7 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
   private final Supplier<URI> transportUriProvider;
 
   @Getter
-  private final BiFunction<FluxSink<S>, Publisher<S>, WebSocketHandler> handlerFactory;
+  private final BiFunction<Consumer<S>, Publisher<S>, WebSocketHandler> handlerFactory;
 
   @Builder.Default
   private Mono<HttpHeaders> webSocketHeadersProvider = Mono.fromSupplier(HttpHeaders::new);
@@ -87,7 +89,7 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
   private Mono<Void> doAfterSessionClose = Mono.empty();
 
   @Builder.Default
-  private Function<FluxSink<T>, Duration> doConnect = sink -> Duration.ZERO;
+  private Function<Consumer<T>, Duration> doConnect = sink -> Duration.ZERO;
 
   @Builder.Default
   private Predicate<T> isConnectedFrame = frame -> true;
@@ -135,10 +137,10 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
       = (T frame, FluxSink<T> sink, Runnable onComplete) -> Mono.just(frame);
 
   @Builder.Default
-  private ThrowingFunction<T, Publisher<S>, IOException> encoder = frame -> Mono.empty();
+  private ThrowingFunction<T, List<S>, IOException> encoder = frame -> Collections.emptyList();
 
   @Builder.Default
-  private ThrowingFunction<S, Publisher<T>, IOException> decoder = bytes -> Mono.empty();
+  private ThrowingFunction<S, List<T>, IOException> decoder = bytes -> Collections.emptyList();
 
   @Builder.Default
   private Duration subscriptionThrottleDuration = Duration.ofSeconds(1);
@@ -322,7 +324,13 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
         .handlerFactory(handlerFactory).webSocketHeadersProvider(webSocketHeadersProvider)
         .doBeforeOpen(doBeforeSessionOpen
             .then(Mono.fromRunnable(() -> context.getBeforeOpenSignalSink().next(1L))))
-        .doAfterOpen(sink -> connect(new FluxSinkAdapter<T, S, IOException>(sink, encoder),
+        .doAfterOpen(sink -> connect(frame -> {
+          try {
+            encoder.apply(frame).forEach(sink::accept);
+          } catch (IOException ex) {
+            log.log(Level.WARNING, "Encountered error processing after open hook.", ex);
+          }
+        },
             context.getConnectionExpectationProcessor()))
         .doBeforeClose(
             response -> beforeCloseAction.get().apply(response).then(Mono.fromRunnable(() -> {
@@ -391,7 +399,7 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
     return connectedContexts;
   }
 
-  protected Mono<Void> connect(FluxSink<T> streamRequestSink,
+  protected Mono<Void> connect(Consumer<T> streamRequestSink,
       ConcatProcessor<Duration> connectionExpectationProcessor) {
     Duration connectionTimeout = doConnect.apply(streamRequestSink);
     expectConnectionWithin(connectionExpectationProcessor.sink(), connectionTimeout);

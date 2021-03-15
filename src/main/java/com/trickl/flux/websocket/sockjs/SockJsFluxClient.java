@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiFunction;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import lombok.Builder;
@@ -30,6 +31,7 @@ import org.springframework.web.reactive.socket.client.WebSocketClient;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Sinks;
 
 @Log
 public class SockJsFluxClient<TopicT, T, S> {
@@ -226,7 +228,7 @@ public class SockJsFluxClient<TopicT, T, S> {
     return Optional.of(SockJsHeartbeatFrame.builder().build());
   }
 
-  protected Duration doConnect(FluxSink<SockJsFrame> streamRequestSink) {
+  protected Duration doConnect(Consumer<SockJsFrame> streamRequestSink) {
     return connectionTimeout;
   }
 
