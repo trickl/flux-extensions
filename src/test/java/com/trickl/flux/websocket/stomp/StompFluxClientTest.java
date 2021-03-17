@@ -78,7 +78,6 @@ public class StompFluxClientTest {
           mockServer.start();          
           return Mono.delay(Duration.ofMillis(500)).then();
         }))
-        .doAfterSessionClose(Mono.defer(() -> shutdown(mockServer)))
         .build();
 
     VerifierComplete verifierComplete = mockServer.beginVerifier()
@@ -211,11 +210,13 @@ public class StompFluxClientTest {
         .thenExpectOpen()
         .thenExpectMessage(STOMP_CONNECT_PATTERN)
         .thenExpectClose()
+        .then(() -> shutdown(mockServer).subscribe())
         .thenWaitServerShutdown()
         .thenWaitServerStartThenUpgrade()
         .thenExpectOpen()        
         .thenExpectMessage(STOMP_CONNECT_PATTERN)
         .thenExpectClose()
+        .then(() -> shutdown(mockServer).subscribe())
         .thenWaitServerShutdown()
         .thenWaitServerStartThenUpgrade()    
         .thenExpectOpen()        
@@ -263,6 +264,7 @@ public class StompFluxClientTest {
         .thenExpectMessage(STOMP_DISCONNECT_PATTERN, Duration.ofMinutes(5))
         .thenSend(STOMP_RECEIPT_MESSAGE)
         .thenExpectClose()
+        .then(() -> shutdown(mockServer).subscribe())
         .thenWaitServerShutdown()
         .thenWaitServerStartThenUpgrade()
         .thenExpectOpen()        
@@ -275,6 +277,7 @@ public class StompFluxClientTest {
         .thenExpectMessage(STOMP_DISCONNECT_PATTERN)
         .thenSend(STOMP_RECEIPT_MESSAGE)
         .thenExpectClose()
+        .then(() -> shutdown(mockServer).subscribe())
         .thenWaitServerShutdown()
         .thenWaitServerStartThenUpgrade()    
         .thenExpectOpen()        

@@ -1,5 +1,7 @@
 package com.trickl.flux.websocket;
 
+import com.trickl.flux.mappers.DelayCancel;
+import java.time.Duration;
 import java.util.function.Function;
 import lombok.RequiredArgsConstructor;
 import org.reactivestreams.Publisher;
@@ -21,18 +23,15 @@ public class CloseHandler<T> implements WebSocketHandler {
 
   @Override
   public Mono<Void> handle(WebSocketSession session) {    
-    return impl.handle(session)
+    return Mono.from(DelayCancel.apply(impl.handle(session)
         .materialize()
         .flatMap(signal -> {
           CloseStatus status = signal.isOnError() 
               ? CloseStatus.SERVER_ERROR 
               : CloseStatus.NORMAL;         
-          return close(session, status).then(Mono.just(signal));          
+          return Mono.defer(() -> close(session, status)).then(Mono.just(signal));          
         })
-        .dematerialize()
-        .doOnCancel(() -> {
-          close(session, CloseStatus.NORMAL).subscribe();
-        })  
+        .dematerialize(), Mono.defer(() -> close(session, CloseStatus.NORMAL))))    
         .log("CloseHandler")
         .then();
   }
@@ -44,6 +43,7 @@ public class CloseHandler<T> implements WebSocketHandler {
       return doAfterClose;
     }
     return doBeforeClose.apply(receive)
+        .then(Mono.delay(Duration.ofSeconds(1)))
         .then(session.close(status))
         .then(doAfterClose);
   }

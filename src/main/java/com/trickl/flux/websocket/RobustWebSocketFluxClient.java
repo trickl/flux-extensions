@@ -163,14 +163,13 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
         EmitterProcessor.create();
     FluxSink<ConnectedStreamContext<T, TopicT>> connectedContextSink =
         connectedContextEmitter.sink();
-
-    EmitterProcessor<Long> disconnectedSignalEmitter = EmitterProcessor.create();
-    FluxSink<Long> disconnectedSignalSink = disconnectedSignalEmitter.sink();
+    
+    Sinks.One<Long> disconnectedSignalSink = Sinks.one();
 
     Publisher<ConnectedStreamContext<T, TopicT>> connectedContexts =
         connectedContextEmitter.log("connectedSignal", Level.FINE)
             .doOnNext(value -> log.info(ANSI_RED + "connected" + ANSI_RESET)).share();
-    Publisher<Long> disconnectedSignal = disconnectedSignalEmitter.log("disconnectedSignal")
+    Publisher<Long> disconnectedSignal = disconnectedSignalSink.asMono().log("disconnectedSignal")
         .doOnNext(value -> log.info(ANSI_RED + "disconnected" + ANSI_RESET)).share();
 
     ConcatProcessor<T> streamRequestProcessor = ConcatProcessor.create();
@@ -334,9 +333,9 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
             context.getConnectionExpectationProcessor()))
         .doBeforeClose(
             response -> beforeCloseAction.get().apply(response).then(Mono.fromRunnable(() -> {
-              context.getTopicContext().getDisconnectedSignalSink().next(1L);
+              context.getTopicContext().getDisconnectedSignalSink().tryEmitValue(1L);
               beforeCloseAction.set(resp -> Mono.empty());
-            })))
+            }).then(Mono.delay(Duration.ofSeconds(1))).then()))
         .doAfterClose(doAfterSessionClose).build();
     
     Flux<T> base = Flux
@@ -523,7 +522,7 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
 
     protected final Publisher<ConnectedStreamContext<T, TopicT>> connectedContexts;
 
-    protected final FluxSink<Long> disconnectedSignalSink;
+    protected final Sinks.One<Long> disconnectedSignalSink;
 
     protected final Publisher<Long> disconnectedSignal;
 
