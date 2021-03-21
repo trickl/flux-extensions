@@ -74,14 +74,11 @@ public class StompFluxClientTest {
         StompFluxClient.builder()
         .webSocketClient(client)
         .transportUriProvider(mockServer::getWebSocketUri)
-        .doBeforeSessionOpen(Mono.defer(() -> {
-          mockServer.start();          
-          return Mono.delay(Duration.ofMillis(500)).then();
-        }))
         .build();
 
     VerifierComplete verifierComplete = mockServer.beginVerifier()
-        .thenWaitServerStartThenUpgrade()
+        .then(() -> mockServer.start())
+        .thenWaitServerStartThenUpgrade()        
         .thenExpectOpen()
         .thenExpectMessage(STOMP_CONNECT_PATTERN)
         .thenSend(STOMP_CONNECTED_NO_HB_MESSAGE)
@@ -114,15 +111,12 @@ public class StompFluxClientTest {
     StompFluxClient stompClient =
         StompFluxClient.builder()
         .webSocketClient(client)
-        .transportUriProvider(mockServer::getWebSocketUri)
-        .doBeforeSessionOpen(Mono.defer(() -> {
-          mockServer.start();          
-          return Mono.delay(Duration.ofMillis(500)).then();
-        }))        
+        .transportUriProvider(mockServer::getWebSocketUri)  
         .build();
 
     VerifierComplete verifierComplete = mockServer.beginVerifier()
-        .thenWaitServerStartThenUpgrade()
+        .then(() -> mockServer.start())
+        .thenWaitServerStartThenUpgrade()        
         .thenExpectOpen()
         .thenExpectMessage(STOMP_CONNECT_PATTERN)
         .thenSend(STOMP_CONNECTED_NO_HB_MESSAGE)
@@ -155,16 +149,13 @@ public class StompFluxClientTest {
         StompFluxClient.builder()
         .webSocketClient(client)
         .transportUriProvider(mockServer::getWebSocketUri)
-        .doBeforeSessionOpen(Mono.defer(() -> {
-          mockServer.start();          
-          return Mono.delay(Duration.ofMillis(500)).then();
-        }))        
         .build();
 
     AtomicReference<Disposable> secondSubscription = new AtomicReference<>();
 
     VerifierComplete verifierComplete = mockServer.beginVerifier()
-        .thenWaitServerStartThenUpgrade()
+        .then(() -> mockServer.start())
+        .thenWaitServerStartThenUpgrade()        
         .thenExpectOpen()
         .thenExpectMessage(STOMP_CONNECT_PATTERN)
         .thenSend(STOMP_CONNECTED_NO_HB_MESSAGE)
@@ -206,19 +197,22 @@ public class StompFluxClientTest {
     MockServerWithWebSocket mockServer = new MockServerWithWebSocket();
 
     mockServer.beginVerifier()
-        .thenWaitServerStartThenUpgrade()
+        .then(() -> mockServer.start())
+        .thenWaitServerStartThenUpgrade()        
         .thenExpectOpen()
         .thenExpectMessage(STOMP_CONNECT_PATTERN)
         .thenExpectClose()
         .then(() -> shutdown(mockServer).subscribe())
         .thenWaitServerShutdown()
-        .thenWaitServerStartThenUpgrade()
+        .then(() -> mockServer.start())
+        .thenWaitServerStartThenUpgrade()        
         .thenExpectOpen()        
         .thenExpectMessage(STOMP_CONNECT_PATTERN)
         .thenExpectClose()
         .then(() -> shutdown(mockServer).subscribe())
         .thenWaitServerShutdown()
-        .thenWaitServerStartThenUpgrade()    
+        .then(() -> mockServer.start())
+        .thenWaitServerStartThenUpgrade()        
         .thenExpectOpen()        
         .thenExpectMessage(STOMP_CONNECT_PATTERN)
         .thenExpectClose()
@@ -232,10 +226,6 @@ public class StompFluxClientTest {
         .webSocketClient(client)
         .transportUriProvider(mockServer::getWebSocketUri)
         .connectionTimeout(Duration.ofSeconds(1))
-        .doBeforeSessionOpen(Mono.defer(() -> {
-          mockServer.start();          
-          return Mono.delay(Duration.ofMillis(500)).then();
-        }))
         .maxRetries(2)        
         .build();
 
@@ -253,6 +243,7 @@ public class StompFluxClientTest {
     MockServerWithWebSocket mockServer = new MockServerWithWebSocket();
 
     mockServer.beginVerifier()
+        .then(() -> mockServer.start())
         .thenWaitServerStartThenUpgrade(Duration.ofMinutes(5))
         .thenExpectOpen(Duration.ofMinutes(5))
         .thenExpectMessage(STOMP_CONNECT_PATTERN, Duration.ofMinutes(5))
@@ -266,6 +257,7 @@ public class StompFluxClientTest {
         .thenExpectClose()
         .then(() -> shutdown(mockServer).subscribe())
         .thenWaitServerShutdown()
+        .then(() -> mockServer.start())
         .thenWaitServerStartThenUpgrade()
         .thenExpectOpen()        
         .thenExpectMessage(STOMP_CONNECT_PATTERN)
@@ -279,6 +271,7 @@ public class StompFluxClientTest {
         .thenExpectClose()
         .then(() -> shutdown(mockServer).subscribe())
         .thenWaitServerShutdown()
+        .then(() -> mockServer.start())
         .thenWaitServerStartThenUpgrade()    
         .thenExpectOpen()        
         .thenExpectMessage(STOMP_CONNECT_PATTERN)
@@ -301,12 +294,7 @@ public class StompFluxClientTest {
         .transportUriProvider(mockServer::getWebSocketUri)
         .connectionTimeout(Duration.ofSeconds(15))
         .heartbeatReceiveFrequency(Duration.ofSeconds(3))
-        .maxRetries(2)
-        .doBeforeSessionOpen(Mono.defer(() -> {
-          log.info("Starting websocket session.");
-          mockServer.start();          
-          return Mono.delay(Duration.ofMillis(500)).then();
-        }))        
+        .maxRetries(2)  
         .build();
 
     Flux<String> output = stompClient.get(
@@ -314,7 +302,7 @@ public class StompFluxClientTest {
 
     StepVerifier.create(output)     
         .expectErrorMessage("Max retries exceeded")
-        .verify(Duration.ofMinutes(1));
+        .verify(Duration.ofMinutes(15));
   }
 
   @Test
@@ -323,6 +311,7 @@ public class StompFluxClientTest {
     MockServerWithWebSocket mockServer = new MockServerWithWebSocket();
 
     VerifierComplete verifierComplete = mockServer.beginVerifier()
+        .then(() -> mockServer.start())
         .thenWaitServerStartThenUpgrade(Duration.ofMinutes(5))
         .thenExpectOpen(Duration.ofMinutes(5))
         .thenExpectMessage(STOMP_CONNECT_PATTERN, Duration.ofMinutes(5))
@@ -344,12 +333,7 @@ public class StompFluxClientTest {
         .transportUriProvider(mockServer::getWebSocketUri)
         .connectionTimeout(Duration.ofSeconds(15))
         .heartbeatReceiveFrequency(Duration.ofSeconds(0))
-        .maxRetries(2)
-        .doBeforeSessionOpen(Mono.defer(() -> {
-          log.info("Starting websocket session.");
-          mockServer.start();          
-          return Mono.delay(Duration.ofMillis(500)).then();
-        }))        
+        .maxRetries(2)  
         .build();
 
     Flux<String> output = stompClient.get(

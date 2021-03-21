@@ -1,5 +1,6 @@
 package com.trickl.flux.retry;
 
+import java.text.MessageFormat;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.List;
@@ -26,6 +27,12 @@ public class ExponentialBackoffRetry extends Retry {
   @Override
   public Publisher<?> generateCompanion(Flux<Retry.RetrySignal> errorFlux) {
     return errorFlux
+        .doOnNext(retrySignal -> {
+          String message = MessageFormat.format(
+              "ExponenialBackoffRetry (retry count={0}) got failure: {1}",
+              retrySignal.totalRetriesInARow(), retrySignal.failure());
+          log.warning(message);
+        })
         .flatMap(retrySignal -> {
           if (!shouldRetry.test(retrySignal.failure())) {
             return Mono.<Retry.RetrySignal>error(

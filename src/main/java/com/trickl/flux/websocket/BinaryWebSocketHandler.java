@@ -33,7 +33,7 @@ public class BinaryWebSocketHandler implements WebSocketHandler {
 
     Mono<Void> output =
         session.send(Flux.from(send)
-           .log("send", Level.FINER)
+           .log("send", Level.INFO)
            .map(message -> createMessage(session, message)))
            .doFinally(signalType -> 
                log.info("Output completed with signal - " 

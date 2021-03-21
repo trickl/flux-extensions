@@ -76,6 +76,7 @@ public class SockJsFluxClientTest {
     MockServerWithWebSocket mockServer = new MockServerWithWebSocket();
 
     VerifierComplete verifierComplete = mockServer.beginVerifier()
+        .then(() -> mockServer.start())
         .thenWaitServerStartThenUpgrade(Duration.ofMinutes(5))
         .thenExpectOpen(Duration.ofMinutes(5))
         .thenSend(SOCKJS_CONNECTED_MESSAGE)        
@@ -105,10 +106,6 @@ public class SockJsFluxClientTest {
             .build());
         })
         .maxRetries(2)
-        .doBeforeSessionOpen(Mono.defer(() -> {
-          mockServer.start();          
-          return Mono.delay(Duration.ofMillis(500)).then();
-        }))
         .doAfterSessionClose(Mono.defer(() -> shutdown(mockServer)))
         .build();
 
@@ -129,6 +126,7 @@ public class SockJsFluxClientTest {
     MockServerWithWebSocket mockServer = new MockServerWithWebSocket();
 
     VerifierComplete verifierComplete = mockServer.beginVerifier()
+        .then(() -> mockServer.start())
         .thenWaitServerStartThenUpgrade(Duration.ofMinutes(5))
         .thenExpectOpen(Duration.ofMinutes(5))
         .thenSend(SOCKJS_CONNECTED_MESSAGE)        
@@ -154,11 +152,7 @@ public class SockJsFluxClientTest {
             send.next("ECHO-ECHO");
           }
         })
-        .maxRetries(2)
-        .doBeforeSessionOpen(Mono.defer(() -> {
-          mockServer.start();          
-          return Mono.delay(Duration.ofMillis(500)).then();
-        }))        
+        .maxRetries(2)  
         .build();
 
     Flux<String> output = sockJsClient.get(
@@ -178,6 +172,7 @@ public class SockJsFluxClientTest {
     MockServerWithWebSocket mockServer = new MockServerWithWebSocket();
 
     VerifierComplete verifierComplete = mockServer.beginVerifier()
+        .then(() -> mockServer.start())
         .thenWaitServerStartThenUpgrade(Duration.ofMinutes(5))
         .thenExpectOpen(Duration.ofMinutes(5))
         .thenSend(SOCKJS_CONNECTED_MESSAGE)        
@@ -203,11 +198,7 @@ public class SockJsFluxClientTest {
             onComplete.run();
           }
         })
-        .maxRetries(2)
-        .doBeforeSessionOpen(Mono.defer(() -> {
-          mockServer.start();          
-          return Mono.delay(Duration.ofMillis(500)).then();
-        }))        
+        .maxRetries(2)  
         .build();
 
     Flux<String> output = sockJsClient.get(
