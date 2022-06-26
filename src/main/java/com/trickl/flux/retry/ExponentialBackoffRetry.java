@@ -5,6 +5,7 @@ import java.time.Duration;
 import java.util.Collections;
 import java.util.List;
 import java.util.function.Predicate;
+import java.util.logging.Level;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import lombok.Builder;
@@ -31,7 +32,7 @@ public class ExponentialBackoffRetry extends Retry {
           String message = MessageFormat.format(
               "ExponenialBackoffRetry (retry count={0}) got failure: {1}",
               retrySignal.totalRetriesInARow(), retrySignal.failure());
-          log.warning(message);
+          log.log(Level.WARNING, message, retrySignal.failure());
         })
         .flatMap(retrySignal -> {
           if (!shouldRetry.test(retrySignal.failure())) {
