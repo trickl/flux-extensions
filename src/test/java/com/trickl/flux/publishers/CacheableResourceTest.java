@@ -28,13 +28,13 @@ public class CacheableResourceTest {
         .build();
 
     StepVerifier.create(cachedResource.getResource()).expectNext(0).expectComplete()
-        .verify(Duration.ofSeconds(300));
+        .verify(Duration.ofSeconds(5));
 
     StepVerifier.create(cachedResource.getResource()).expectNext(0).expectComplete()
-        .verify(Duration.ofSeconds(300));
+        .verify(Duration.ofSeconds(5));
 
     StepVerifier.create(cachedResource.getResource()).expectNext(0).expectComplete()
-        .verify(Duration.ofSeconds(300));
+        .verify(Duration.ofSeconds(5));
 
     Mockito.verify(generator, Mockito.times(1)).apply(any());
   }
@@ -56,17 +56,17 @@ public class CacheableResourceTest {
     StepVerifier.create(cachedResource.getResource())
         .expectNext(0)
         .expectComplete()
-        .verify(Duration.ofSeconds(300));
+        .verify(Duration.ofSeconds(5));
 
     StepVerifier.create(cachedResource.getResource())
         .expectNext(1)
         .expectComplete()
-        .verify(Duration.ofSeconds(300));
+        .verify(Duration.ofSeconds(5));
 
     StepVerifier.create(cachedResource.getResource())
         .expectNext(2)
         .expectComplete()
-        .verify(Duration.ofSeconds(300));
+        .verify(Duration.ofSeconds(5));
 
     
     Mockito.verify(generator, Mockito.times(3)).apply(any());
@@ -93,6 +93,6 @@ public class CacheableResourceTest {
         .expectNext(0)   
         .then(() -> secondSubscription.get().dispose())     
         .expectComplete()        
-        .verify(Duration.ofSeconds(300));
+        .verify(Duration.ofSeconds(5));
   }
 }
