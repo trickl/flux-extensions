@@ -75,6 +75,11 @@
         <version>3.0.1</version>
     </dependency>
     <dependency>
+      <groupId>com.github.ben-manes.caffeine</groupId>
+      <artifactId>caffeine</artifactId>
+      <version>3.1.1</version>
+    </dependency>
+    <dependency>
       <groupId>com.github.trickl</groupId>
       <artifactId>flux-mock-websocket</artifactId>
       <version>0.0.5-SNAPSHOT</version>

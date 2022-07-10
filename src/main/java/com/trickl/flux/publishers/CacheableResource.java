@@ -1,16 +1,16 @@
 package com.trickl.flux.publishers;
 
+import com.github.benmanes.caffeine.cache.AsyncCache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import java.time.Duration;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.function.Predicate;
-import java.util.logging.Level;
 import lombok.Builder;
 import lombok.extern.java.Log;
-import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.core.publisher.Sinks;
 
 @Log
 public class CacheableResource<T> {
@@ -19,9 +19,12 @@ public class CacheableResource<T> {
 
   private final Predicate<T> shouldGenerate;
 
-  private final Duration timeout;
-
   private final AtomicBoolean shouldGenerateOnNextRequest = new AtomicBoolean(true);
+
+  private final AsyncCache<Long, T> monoCache =
+      Caffeine.newBuilder().maximumSize(1).buildAsync();
+
+  private final Long cacheKey = 0L;
 
   /**
    * Create a cacheable resource.
@@ -35,14 +38,7 @@ public class CacheableResource<T> {
       Function<T, Mono<T>> resourceGenerator, Predicate<T> shouldGenerate, Duration timeout) {
     this.resourceGenerator = resourceGenerator;
     this.shouldGenerate = Optional.ofNullable(shouldGenerate).orElse(value -> false);
-    this.timeout = Optional.ofNullable(timeout).orElse(Duration.ofMinutes(1));    
   }
-
-  private final Sinks.Many<T> lastResourceSink =
-      Sinks.many().multicast().onBackpressureBuffer();
-
-  private final Flux<T> lastResourcePublisher =
-      lastResourceSink.asFlux().cache(1).log("lastResource", Level.FINE);
 
   public void supplyOnNextRequest() {
     shouldGenerateOnNextRequest.set(true);
@@ -52,24 +48,20 @@ public class CacheableResource<T> {
     Mono<T> nextResource;
 
     if (shouldGenerateOnNextRequest.getAndSet(false)) {
-      log.fine("Generating new resource");
       nextResource = resourceGenerator.apply(null);
     } else {
-      log.fine("Waiting on last resource");
-      nextResource = lastResourcePublisher.flatMap(last -> getNextResource(last)).single();
+      CompletableFuture<T> fromCache = monoCache.getIfPresent(cacheKey);
+      if (fromCache != null) {
+        nextResource = Mono.fromFuture(fromCache).flatMap(last -> getNextResource(last));
+      } else {
+        nextResource = resourceGenerator.apply(null);
+      }
     }
 
-    return Mono.zip(
-            lastResourcePublisher.next().timeout(timeout).log("cachedResource", Level.FINE),
-            nextResource
-                .doOnNext(
-                    resource -> {
-                      log.fine("Got resource - " + resource);
-                      lastResourceSink.tryEmitNext(resource);
-                    })
-                .log("generatedResource", Level.FINE),
-        (cachedResource, generatedResource) -> generatedResource)
-        .log("zipResource", Level.FINE);
+    monoCache.put(cacheKey, nextResource.toFuture());
+    return Optional.ofNullable(monoCache.getIfPresent(cacheKey))
+        .map(Mono::fromFuture)
+        .orElse(Mono.empty());
   }
 
   protected Mono<T> getNextResource(T lastResource) {
