@@ -29,9 +29,7 @@ import org.reactivestreams.Publisher;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.reactive.socket.client.WebSocketClient;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
-import reactor.core.publisher.Sinks;
 
 @Log
 public class StompFluxClient {

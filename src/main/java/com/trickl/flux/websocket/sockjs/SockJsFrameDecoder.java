@@ -14,7 +14,7 @@ import org.springframework.web.socket.sockjs.frame.SockJsMessageCodec;
 
 @Log
 @RequiredArgsConstructor
-public class SockJsFrameDecoder 
+public class SockJsFrameDecoder
     implements ThrowingFunction<String, List<SockJsFrame>, IOException> {
 
   private final SockJsMessageCodec decoder;
@@ -33,17 +33,23 @@ public class SockJsFrameDecoder
   public List<SockJsFrame> apply(String payload) throws IOException {
     SockJsFrameBuilder frameBuilder = new SockJsFrameBuilder();
 
-    org.springframework.web.socket.sockjs.frame.SockJsFrame spFrame
-        = new org.springframework.web.socket.sockjs.frame.SockJsFrame(payload);
-    SockJsFrameType frameType = spFrame.getType();
     String[] messages = null;
+    org.springframework.web.socket.sockjs.frame.SockJsFrame spFrame =
+        new org.springframework.web.socket.sockjs.frame.SockJsFrame(payload);
+    SockJsFrameType frameType = spFrame.getType();
     if (SockJsFrameType.CLOSE.equals(frameType) || SockJsFrameType.MESSAGE.equals(frameType)) {
       messages = decoder.decode(spFrame.getFrameData());
     }
 
-    return frameBuilder.apply(frameType, messages).stream().map(frame -> {
-      log.log(Level.FINE, "\u001B[34mRECEIVED {0}\u001B[0m", new Object[] { frame });
-      return frame;
-    }).collect(Collectors.toList());
+    return frameBuilder.apply(frameType, messages).stream()
+        .map(
+            frame -> {
+              log.log(
+                  Level.FINE,
+                  "\u001B[34mRECEIVED {0} {1}\u001B[0m",
+                  new Object[] {frameType, frame});
+              return frame;
+            })
+        .collect(Collectors.toList());
   }
 }
