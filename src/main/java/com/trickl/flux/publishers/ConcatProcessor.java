@@ -7,9 +7,9 @@ import lombok.extern.java.Log;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
 import reactor.core.Disposable;
-import reactor.core.publisher.EmitterProcessor;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.FluxSink;
+import reactor.core.publisher.Mono;
+import reactor.core.publisher.Sinks;
 
 @Log
 @RequiredArgsConstructor
@@ -17,11 +17,9 @@ public class ConcatProcessor<T> implements Publisher<T> {
 
   protected final Publisher<T> innerPublisher;
 
-  protected final AtomicReference<FluxSink<T>> innerSinkRef;
+  protected final AtomicReference<Sinks.Many<T>> innerSinkRef;
 
-  protected final Publisher<Long> completeSignalPublisher;
-
-  protected final FluxSink<Long> completeSignalSink;
+  protected final Sinks.Many<Long> completeSignalSink;
 
   protected final Disposable subscription;
 
@@ -38,22 +36,33 @@ public class ConcatProcessor<T> implements Publisher<T> {
   /**
    * Create a processor that can concatenate terminated streams.
    * 
-   * @param <T> The type of flux element.
+   * @param <T>     The type of flux element.
    * @param history How much history to replay on subscription.
    * @return A processor that can concatenate terminated streams.
    */
   public static <T> ConcatProcessor<T> create(int history) {
-    AtomicReference<FluxSink<T>> sinkRef = new AtomicReference<FluxSink<T>>();
-    EmitterProcessor<Long> completeSignalEmitter =  EmitterProcessor.<Long>create();
-    FluxSink<Long> completeSignalSink = completeSignalEmitter.sink();
+    return create(0, Mono.empty());
+  }
 
-    Flux<T> publisher = createSwitchOnCompletePublisher(
-        sinkRef, completeSignalEmitter, completeSignalSink)
+  /**
+   * Create a processor that can concatenate terminated streams.
+   * 
+   * @param <T>             The type of flux element.
+   * @param history         How much history to replay on subscription.
+   * @param historySupplier Initial supplier for history
+   * @return A processor that can concatenate terminated streams.
+   */
+  public static <T> ConcatProcessor<T> create(int history, Publisher<T> historySupplier) {
+    AtomicReference<Sinks.Many<T>> sinkRef = new AtomicReference<Sinks.Many<T>>();
+    Sinks.Many<Long> completeSignalSink = Sinks.many().multicast().onBackpressureBuffer();
+
+    Flux<T> publisher = Flux.from(historySupplier).thenMany(createSwitchOnCompletePublisher(
+        sinkRef, completeSignalSink))
         .replay(history).refCount();
     Disposable subscription = publisher.subscribe();
 
     return new ConcatProcessor<>(
-        publisher, sinkRef, completeSignalEmitter, completeSignalSink, subscription);
+        publisher, sinkRef, completeSignalSink, subscription);
   }
 
   /**
@@ -61,7 +70,7 @@ public class ConcatProcessor<T> implements Publisher<T> {
    * 
    * @return A FluxSink.
    */
-  public FluxSink<T> sink() {
+  public Sinks.Many<T> sink() {
     return innerSinkRef.get();
   }
 
@@ -70,35 +79,33 @@ public class ConcatProcessor<T> implements Publisher<T> {
    */
   public void complete() {
     subscription.dispose();
-    completeSignalSink.complete();
-    innerSinkRef.get().complete();    
+    completeSignalSink.tryEmitComplete();
+    innerSinkRef.get().tryEmitComplete();
   }
-  
-  protected static <T> Flux<T> createSwitchOnCompletePublisher(
-      AtomicReference<FluxSink<T>> sinkRef, 
-      Publisher<Long> completeSignalPublisher,
-       FluxSink<Long> completeSignalSink) {
-    EmitterProcessor<T> initialEmitter =  EmitterProcessor.<T>create();
-    sinkRef.set(initialEmitter.sink());
-    Publisher<T> initialPublisher = 
-        signalCompletion(initialEmitter, completeSignalSink);
 
-    Flux<Publisher<T>> mergedPublishers = Flux.from(completeSignalPublisher)
-        .map(signal -> {        
+  protected static <T> Flux<T> createSwitchOnCompletePublisher(
+      AtomicReference<Sinks.Many<T>> sinkRef,
+      Sinks.Many<Long> completeSignalSink) {
+    Sinks.Many<T> initialSink = Sinks.many().multicast().onBackpressureBuffer();
+    sinkRef.set(initialSink);
+    Publisher<T> initialPublisher = signalCompletion(initialSink.asFlux(), completeSignalSink);
+
+    Flux<Publisher<T>> mergedPublishers = completeSignalSink.asFlux()
+        .map(signal -> {
           log.log(Level.FINE, "Switching on complete signal");
-          EmitterProcessor<T> nextEmitter =  EmitterProcessor.<T>create();          
-          sinkRef.set(nextEmitter.sink());
-          return signalCompletion(nextEmitter, completeSignalSink);
+          Sinks.Many<T> nextSink = Sinks.many().multicast().onBackpressureBuffer();
+          sinkRef.set(nextSink);
+          return signalCompletion(nextSink.asFlux(), completeSignalSink);
         });
 
     return Flux.concat(Flux.just(initialPublisher).concatWith(mergedPublishers));
   }
 
   protected static <T> Flux<T> signalCompletion(
-      Publisher<T> publisher, FluxSink<Long> completeSignalSink) {
+      Publisher<T> publisher, Sinks.Many<Long> completeSignalSink) {
     return Flux.from(publisher)
         .doOnComplete(() -> {
-          completeSignalSink.next(1L);
+          completeSignalSink.tryEmitNext(1L);
         });
   }
 

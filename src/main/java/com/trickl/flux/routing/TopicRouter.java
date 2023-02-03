@@ -176,7 +176,7 @@ public class TopicRouter<T, TopicT> {
     log.info(message);
     TopicSubscription<TopicT> topicSubscription = new TopicSubscription<TopicT>(id, topic);
     if (isConnected) {
-      subscriptionProcessor.sink().next(Collections.singleton(topicSubscription));
+      subscriptionProcessor.sink().tryEmitNext(Collections.singleton(topicSubscription));
     }
     return topicSubscription;
   }
@@ -187,7 +187,7 @@ public class TopicRouter<T, TopicT> {
           "{0} unsubscribing to topic {1}",
           topicSubscription.getId(), topicSubscription.getTopic());            
       log.info(message);  
-      unsubscribeProcessor.sink().next(Collections.singleton(topicSubscription));
+      unsubscribeProcessor.sink().tryEmitNext(Collections.singleton(topicSubscription));
     }
   }
 }

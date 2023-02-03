@@ -49,9 +49,7 @@ import org.reactivestreams.Publisher;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.client.WebSocketClient;
-import reactor.core.publisher.EmitterProcessor;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 
@@ -121,7 +119,7 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
 
   @Builder.Default
   private ProtocolFrameHandler<T> handleProtocolFrames =
-      (T frame, FluxSink<T> sink, Runnable onComplete) -> Mono.just(frame);
+      (T frame, Sinks.Many<T> sink, Runnable onComplete) -> Mono.just(frame);
 
   @Builder.Default
   private ThrowingFunction<T, List<S>, IOException> encoder = frame -> Collections.emptyList();
@@ -145,15 +143,14 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
 
   protected TopicContext<T, TopicT> createTopicContext() {
     log.info("Creating topic context");
-    EmitterProcessor<ConnectedStreamContext<T, TopicT>> connectedContextEmitter =
-        EmitterProcessor.create();
-    FluxSink<ConnectedStreamContext<T, TopicT>> connectedContextSink =
-        connectedContextEmitter.sink();
+    Sinks.Many<ConnectedStreamContext<T, TopicT>> connectedContextSink =
+        Sinks.many().multicast().onBackpressureBuffer();
 
     Sinks.One<Long> disconnectedSignalSink = Sinks.one();
 
     Publisher<ConnectedStreamContext<T, TopicT>> connectedContexts =
-        connectedContextEmitter
+        connectedContextSink
+            .asFlux()
             .log("connectedSignal", Level.FINE)
             .doOnNext(value -> log.info(ANSI_RED + "connected" + ANSI_RESET))
             .share();
@@ -186,11 +183,9 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
 
   protected ResponseContext<T, TopicT> createResponseContext(TopicContext<T, TopicT> topicContext) {
     log.info("Creating response context");
-    EmitterProcessor<Long> beforeOpenSignalEmitter = EmitterProcessor.create();
-    FluxSink<Long> beforeOpenSignalSink = beforeOpenSignalEmitter.sink();
+    Sinks.Many<Long> beforeOpenSignalSink = Sinks.many().multicast().onBackpressureBuffer();
 
-    EmitterProcessor<T> forceReconnectSignalEmitter = EmitterProcessor.create();
-    FluxSink<T> forceReconnectSignalSink = forceReconnectSignalEmitter.sink();
+    Sinks.Many<T> forceReconnectSignalSink = Sinks.many().multicast().onBackpressureBuffer();
 
     ConcatProcessor<Duration> connectionExpectationProcessor = ConcatProcessor.create();
 
@@ -209,7 +204,7 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
                               topicContext
                                   .getStreamRequestProcessor()
                                   .sink()
-                                  .next(subscriptionFrame);
+                                  .tryEmitNext(subscriptionFrame);
                             });
                   } else if (action.getType().equals(SetActionType.Remove)) {
                     List<T> unsubscribeFrames =
@@ -220,7 +215,7 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
                               topicContext
                                   .getStreamRequestProcessor()
                                   .sink()
-                                  .next(unsubscribeFrame);
+                                  .tryEmitNext(unsubscribeFrame);
                             });
                   }
                 })
@@ -230,7 +225,6 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
         topicContext,
         beforeOpenSignalSink,
         forceReconnectSignalSink,
-        forceReconnectSignalEmitter,
         connectionExpectationProcessor,
         disconnectReceiptProcessor,
         subscriptionsActionsFlux);
@@ -383,7 +377,7 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
             .webSocketHeadersProvider(webSocketHeadersProvider)
             .doBeforeOpen(
                 doBeforeSessionOpen.then(
-                    Mono.fromRunnable(() -> context.getBeforeOpenSignalSink().next(1L))))
+                    Mono.fromRunnable(() -> context.getBeforeOpenSignalSink().tryEmitNext(1L))))
             .doAfterOpen(
                 sink ->
                     connect(
@@ -457,7 +451,7 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
     Flux<T> connectedWithExpectations =
         connected
             .mergeWith(connectionExpectation)
-            .mergeWith(context.getForceReconnectSignal())
+            .mergeWith(context.getForceReconnectSignalSink().asFlux())
             .log("sharedConnectedWithExpectations", Level.FINE)
             .share()
             .log("connectedWithExpectations", Level.FINE);
@@ -473,7 +467,7 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
                               .getResponseContext()
                               .getTopicContext()
                               .getConnectedContextSink()
-                              .next(connectedStreamContext);
+                              .tryEmitNext(connectedStreamContext);
 
                           beforeCloseAction.set(
                               response ->
@@ -509,9 +503,9 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
 
   protected Mono<Void> disconnect(
       Publisher<T> response,
-      FluxSink<T> streamRequestSink,
-      Publisher<Duration> disconnectReceiptExpectationProcessor,
-      FluxSink<Duration> disconnectReceiptExpectationSink) {
+      Sinks.Many<T> streamRequestSink,
+      Publisher<Duration> disconnectReceiptExpectationPublisher,
+      Sinks.Many<Duration> disconnectReceiptExpectationSink) {
     Optional<T> disconnectFrame = buildDisconnectFrame.get();
     log.info("Disconnecting...");
     if (!disconnectFrame.isPresent()) {
@@ -519,7 +513,7 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
     }
 
     if (disconnectionReceiptTimeout.isZero()) {
-      streamRequestSink.next(disconnectFrame.get());
+      streamRequestSink.tryEmitNext(disconnectFrame.get());
       return Mono.empty();
     }
 
@@ -542,15 +536,15 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
 
     Publisher<T> disconnectReceiptExpectation =
         disconnectReceiptExpectationFactory
-            .apply(disconnectReceiptExpectationProcessor, disconnectReceipt)
+            .apply(disconnectReceiptExpectationPublisher, disconnectReceipt)
             .log("disconnectReceiptExceptation", Level.FINE);
 
     return Flux.from(disconnectReceiptExpectation)
         .mergeWith(
             Mono.fromRunnable(
                 () -> {
-                  disconnectReceiptExpectationSink.next(disconnectionReceiptTimeout);
-                  streamRequestSink.next(disconnectFrame.get());
+                  disconnectReceiptExpectationSink.tryEmitNext(disconnectionReceiptTimeout);
+                  streamRequestSink.tryEmitNext(disconnectFrame.get());
                 }))
         .then()
         .log("disconnect", Level.FINE);
@@ -564,15 +558,15 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
     return frame;
   }
 
-  protected void sendErrorFrame(Throwable error, FluxSink<T> streamRequestSink) {
+  protected void sendErrorFrame(Throwable error, Sinks.Many<T> streamRequestSink) {
     log.info("Sending error frame");
     Optional<T> errorFrame = buildErrorFrame.apply(error);
     if (errorFrame.isPresent()) {
-      streamRequestSink.next(errorFrame.get());
+      streamRequestSink.tryEmitNext(errorFrame.get());
     }
   }
 
-  protected Publisher<T> sendHeartbeats(Duration frequency, FluxSink<T> streamRequestSink) {
+  protected Publisher<T> sendHeartbeats(Duration frequency, Sinks.Many<T> streamRequestSink) {
     log.info("Sending heartbeats every " + frequency.toString());
     if (frequency.isZero()) {
       return Flux.empty();
@@ -583,7 +577,7 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
         .flatMap(
             optionalHeartbeat -> {
               if (optionalHeartbeat.isPresent()) {
-                streamRequestSink.next(optionalHeartbeat.get());
+                streamRequestSink.tryEmitNext(optionalHeartbeat.get());
               }
               return Mono.<T>empty();
             })
@@ -591,20 +585,20 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
   }
 
   protected void sendHeartbeatsEvery(
-      FluxSink<Duration> heartbeatSendFrequencySink, Duration frequency) {
+      Sinks.Many<Duration> heartbeatSendFrequencySink, Duration frequency) {
     log.info("Request sending heartbeats every " + frequency.toString());
-    heartbeatSendFrequencySink.next(frequency);
+    heartbeatSendFrequencySink.tryEmitNext(frequency);
   }
 
   protected void expectHeartbeatsEvery(
-      FluxSink<Duration> heartbeatExpectationSink, Duration frequency) {
+      Sinks.Many<Duration> heartbeatExpectationSink, Duration frequency) {
     log.info("Expecting heartbeats every " + frequency.toString());
-    heartbeatExpectationSink.next(frequency);
+    heartbeatExpectationSink.tryEmitNext(frequency);
   }
 
   protected void expectConnectionWithin(
-      FluxSink<Duration> connectionExpectationSink, Duration period) {
-    connectionExpectationSink.next(period);
+      Sinks.Many<Duration> connectionExpectationSink, Duration period) {
+    connectionExpectationSink.tryEmitNext(period);
   }
 
   protected void warnAndDropError(Throwable ex, Object value) {
@@ -631,7 +625,7 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
                   Flux.from(send)
                       .doOnNext(
                           message -> {
-                            topicContext.getStreamRequestProcessor().sink().next(message);
+                            topicContext.getStreamRequestProcessor().sink().tryEmitNext(message);
                           })
                       .ignoreElements();
 
@@ -651,7 +645,7 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
 
   @Value
   private static class TopicContext<T, TopicT> {
-    protected final FluxSink<ConnectedStreamContext<T, TopicT>> connectedContextSink;
+    protected final Sinks.Many<ConnectedStreamContext<T, TopicT>> connectedContextSink;
 
     protected final Publisher<ConnectedStreamContext<T, TopicT>> connectedContexts;
 
@@ -668,11 +662,9 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
   private static class ResponseContext<T, TopicT> {
     protected final TopicContext<T, TopicT> topicContext;
 
-    protected final FluxSink<Long> beforeOpenSignalSink;
+    protected final Sinks.Many<Long> beforeOpenSignalSink;
 
-    protected final FluxSink<T> forceReconnectSignalSink;
-
-    protected final Publisher<T> forceReconnectSignal;
+    protected final Sinks.Many<T> forceReconnectSignalSink;
 
     protected final ConcatProcessor<Duration> connectionExpectationProcessor;
 
@@ -707,6 +699,6 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
 
   @FunctionalInterface
   public interface ProtocolFrameHandler<T> {
-    Publisher<T> apply(T frame, FluxSink<T> sendSink, Runnable onComplete);
+    Publisher<T> apply(T frame, Sinks.Many<T> sendSink, Runnable onComplete);
   }
 }

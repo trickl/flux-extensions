@@ -149,7 +149,7 @@ public class SockJsFluxClientTest {
         .heartbeatSendFrequency(Duration.ZERO)
         .handleProtocolFrames((message, send, onComplete) -> {
           if ("ECHO".equals(message)) {
-            send.next("ECHO-ECHO");
+            send.tryEmitNext("ECHO-ECHO");
           }
         })
         .maxRetries(2)  

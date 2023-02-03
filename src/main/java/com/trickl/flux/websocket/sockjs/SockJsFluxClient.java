@@ -29,8 +29,8 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.web.reactive.socket.CloseStatus;
 import org.springframework.web.reactive.socket.client.WebSocketClient;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Sinks;
 
 @Log
 public class SockJsFluxClient<TopicT, T, S> {
@@ -140,7 +140,7 @@ public class SockJsFluxClient<TopicT, T, S> {
   }
 
   protected Publisher<SockJsFrame> processProtocolFrames(
-      SockJsFrame frame, FluxSink<SockJsFrame> responseSink, Runnable onComplete) {
+      SockJsFrame frame, Sinks.Many<SockJsFrame> responseSink, Runnable onComplete) {
 
     return Mono.just(frame)
         .flatMapMany(
@@ -263,6 +263,6 @@ public class SockJsFluxClient<TopicT, T, S> {
 
   @FunctionalInterface
   public interface ProtocolFrameHandler<T, S> {
-    void accept(T message, FluxSink<S> send, Runnable onComplete);
+    void accept(T message, Sinks.Many<S> send, Runnable onComplete);
   }
 }

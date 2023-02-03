@@ -19,14 +19,14 @@ public class ConcatProcessorTest {
     ConcatProcessor<Integer> processor = ConcatProcessor.create();
 
     StepVerifier.create(processor)
-        .then(() -> processor.sink().next(1))
-        .then(() -> processor.sink().complete())
+        .then(() -> processor.sink().tryEmitNext(1))
+        .then(() -> processor.sink().tryEmitComplete())
         .expectNext(1)
-        .then(() -> processor.sink().next(2))
-        .then(() -> processor.sink().complete())
+        .then(() -> processor.sink().tryEmitNext(2))
+        .then(() -> processor.sink().tryEmitComplete())
         .expectNext(2)
-        .then(() -> processor.sink().next(3))
-        .then(() -> processor.sink().complete())
+        .then(() -> processor.sink().tryEmitNext(3))
+        .then(() -> processor.sink().tryEmitComplete())
         .expectNext(3)
         .then(() -> processor.complete())
         .expectComplete()
@@ -39,7 +39,7 @@ public class ConcatProcessorTest {
     ConcatProcessor<Integer> processor = 
         ConcatProcessor.create(1);
 
-    processor.sink().next(1);
+    processor.sink().tryEmitNext(1);
 
     StepVerifier.create(processor)
         .expectNext(1)

@@ -1,7 +1,6 @@
 package com.trickl.flux.mappers;
 
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Consumer;
 import org.reactivestreams.Publisher;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
