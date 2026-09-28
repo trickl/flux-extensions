@@ -46,7 +46,7 @@ public class SockJsFluxClientTest {
       Pattern.compile("\\[\\\"\\\\\\\"ECHO-ECHO\\\\\\\"\\\"\\]", Pattern.DOTALL);  
 
   @BeforeEach
-  private void setup() {      
+  void setup() {
     subscription = null;
   }
 

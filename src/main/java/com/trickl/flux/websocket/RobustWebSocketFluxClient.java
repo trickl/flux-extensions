@@ -1,6 +1,7 @@
 package com.trickl.flux.websocket;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.trickl.exceptions.ConnectionClosedException;
 import com.trickl.exceptions.ConnectionTimeoutException;
 import com.trickl.exceptions.MissingHeartbeatException;
 import com.trickl.exceptions.NoDataException;
@@ -51,6 +52,7 @@ import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.client.WebSocketClient;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Signal;
 import reactor.core.publisher.Sinks;
 
 @Log
@@ -281,9 +283,13 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
                   log.info("Subscribing to heartbeatExpectation");
                 });
 
+    // Stop expecting heartbeats once the connection ends, so the stream completes with it
+    Mono<Signal<T>> sourceCompleted =
+        source.materialize().filter(Signal::isOnComplete).next();
+
     Flux<T> sourceWithExpectations =
         source
-            .mergeWith(heartbeatExpectations)
+            .mergeWith(heartbeatExpectations.takeUntilOther(sourceCompleted))
             .doOnError(
                 MissingHeartbeatException.class,
                 error -> {
@@ -315,6 +321,13 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
                 context -> {
                   return context
                       .getStream()
+                      // Local disconnects cancel the stream, so completing means the server
+                      // closed the connection: raise an error to reconnect
+                      .concatWith(
+                          Mono.error(
+                              () ->
+                                  new ConnectionClosedException(
+                                      "Connection closed by the server")))
                       .onErrorContinue(JsonProcessingException.class, this::warnAndDropError)
                       .doOnError(
                           error -> {
@@ -411,13 +424,20 @@ public class RobustWebSocketFluxClient<S, T, TopicT> {
 
     Flux<T> base =
         Flux.defer(
-            () ->
-                inputTransformer
-                    .apply(webSocketFluxClient.get(outputTransformer.apply(sendWithResponse)))
-                    .log("Input Transformer", Level.FINE))
-            .flatMap(new ThrowableMapper<T, T>(this::handleErrorFrame))
-            .mergeWith(
-                Flux.from(context.getSubscriptionActionsFlux()).flatMap(none -> Mono.empty()))
+            () -> {
+              // Subscription actions only apply while this socket is open, stop them when
+              // the input ends so the stream completes when the server closes the socket
+              Sinks.Empty<Void> inputTerminated = Sinks.empty();
+              return inputTransformer
+                  .apply(webSocketFluxClient.get(outputTransformer.apply(sendWithResponse)))
+                  .log("Input Transformer", Level.FINE)
+                  .doOnTerminate(inputTerminated::tryEmitEmpty)
+                  .flatMap(new ThrowableMapper<T, T>(this::handleErrorFrame))
+                  .mergeWith(
+                      Flux.from(context.getSubscriptionActionsFlux())
+                          .<T>flatMap(none -> Mono.empty())
+                          .takeUntilOther(inputTerminated.asMono()));
+            })
             .flatMap(
                 frame ->
                     handleProtocolFrames.apply(
